@@ -1,0 +1,49 @@
+{
+    "id": "i_dont_know_any_about_dsa,_so_explain_me_the_patterns_in_dsa.",
+    "title": "I dont know any about DSA, SO explain me the patterns in DSA.",
+    "description": "Main topic: I dont know any about DSA, SO explain me the patterns in DSA.",
+    "depth": 0,
+    "parent_id": null,
+    "children": [
+        {
+            "id": "5be62499-01d1-4c5b-9875-2ece558dc751",
+            "title": "Divide and Conquer",
+            "description": "Break a problem into independent subproblems, solve each recursively, and combine the results. This pattern reduces complex tasks like sorting and searching to simpler steps. It often yields O(n log n) time complexity.",
+            "depth": 1,
+            "parent_id": "i_dont_know_any_about_dsa,_so_explain_me_the_patterns_in_dsa.",
+            "has_children": true
+        },
+        {
+            "id": "e91dc022-c250-4b6f-ac94-bc23206bebd8",
+            "title": "Greedy Algorithms",
+            "description": "Make the locally optimal choice at each step, hoping it leads to a global optimum. Useful for problems like activity selection and Huffman coding. Verify that the greedy choice property holds before applying.",
+            "depth": 1,
+            "parent_id": "i_dont_know_any_about_dsa,_so_explain_me_the_patterns_in_dsa.",
+            "has_children": true
+        },
+        {
+            "id": "fba4e3db-b907-4ed8-b3cb-cca26123720a",
+            "title": "Dynamic Programming",
+            "description": "Solve overlapping subproblems by storing intermediate results in a table. It transforms exponential recursion into polynomial time solutions. Commonly used for knapsack, longest common subsequence, and edit distance.",
+            "depth": 1,
+            "parent_id": "i_dont_know_any_about_dsa,_so_explain_me_the_patterns_in_dsa.",
+            "has_children": true
+        },
+        {
+            "id": "0329605d-ba69-41c3-8a7c-8c305d765492",
+            "title": "Sliding Window Technique",
+            "description": "Maintain a moving subset of elements to process contiguous sequences efficiently. It reduces nested loops to linear time for problems like maximum sum subarray. Adjust the window size based on problem constraints.",
+            "depth": 1,
+            "parent_id": "i_dont_know_any_about_dsa,_so_explain_me_the_patterns_in_dsa.",
+            "has_children": true
+        },
+        {
+            "id": "6602a238-6bbb-4bff-a923-94a374120bac",
+            "title": "Two-pointer Technique",
+            "description": "Use two indices that move through the data structure at different speeds. Ideal for sorted arrays, linked lists, and string problems such as pair sums. It often eliminates the need for extra space.",
+            "depth": 1,
+            "parent_id": "i_dont_know_any_about_dsa,_so_explain_me_the_patterns_in_dsa.",
+            "has_children": true
+        }
+    ]
+}

@@ -1,0 +1,6 @@
+VisualizeAIService/.env
+VisualizeAIService/app/__pycache__
+VisualizeAIService/app/api/__pycache__
+VisualizeAIService/app/core/__pycache__
+VisualizeAIService/app/models/__pycache__
+VisualizeAIService/app/services/__pycache__
