@@ -1,6 +1,31 @@
+# =========================
+# Python
+# =========================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# =========================
+# Virtual Environments
+# =========================
+venv/
+VisualizeAIService/venv/
+
+# =========================
+# Environment files
+# =========================
+.env
 VisualizeAIService/.env
-VisualizeAIService/app/__pycache__
-VisualizeAIService/app/api/__pycache__
-VisualizeAIService/app/core/__pycache__
-VisualizeAIService/app/models/__pycache__
-VisualizeAIService/app/services/__pycache__
+
+# =========================
+# Storage (Generated data)
+# =========================
+storage/
+VisualizeAIService/storage/
+
+# =========================
+# OS / Editor
+# =========================
+.vscode/
+.DS_Store
