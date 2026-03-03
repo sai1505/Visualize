@@ -1,1 +1,19 @@
 @import "tailwindcss";
+
+body {
+    font-family: Inter, sans-serif;
+}
+
+@keyframes gradientMove {
+    0% {
+        transform: translateX(-20%);
+    }
+
+    50% {
+        transform: translateX(20%);
+    }
+
+    100% {
+        transform: translateX(-20%);
+    }
+}
