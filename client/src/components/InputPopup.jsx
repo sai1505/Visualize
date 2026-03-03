@@ -3,15 +3,50 @@ import { motion } from "framer-motion"
 
 export default function InputPopup({ onClose }) {
     const [topic, setTopic] = useState("")
-    const [maxNodes, setMaxNodes] = useState("")
+    const [maxNodes, setMaxNodes] = useState("");
+    const [loading, setLoading] = useState(false);
 
-    const handleSubmit = () => {
+    const handleSubmit = async () => {
+        if (!topic || !maxNodes) return
+
+        setLoading(true)
+
         const payload = {
             topic,
             max_nodes: Number(maxNodes)
         }
 
-        console.log("Sending to backend:", payload)
+        try {
+            const response = await fetch("http://localhost:8000/generate-root", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify(payload)
+            })
+
+            if (!response.ok) {
+                throw new Error("Failed to generate graph")
+            }
+
+            console.log("Status:", response.status)
+
+            const text = await response.text()
+            console.log("Raw response:", text)
+
+            const data = JSON.parse(text)
+            console.log("Parsed:", data)
+
+            //const data = await response.json()
+            //console.log("Backend response:", data)
+
+            onClose()
+
+        } catch (error) {
+            console.error("Error:", error)
+        } finally {
+            setLoading(false)
+        }
     }
 
     return (
@@ -53,14 +88,44 @@ export default function InputPopup({ onClose }) {
 
                 {/* Max Nodes */}
                 <div className="mb-6">
-                    <label className="text-sm text-neutral-400">Max Nodes</label>
-                    <input
-                        type="number"
-                        value={maxNodes}
-                        onChange={(e) => setMaxNodes(e.target.value)}
-                        className="mt-1 w-full px-4 py-2 bg-black border border-neutral-700 
-                       rounded-lg focus:outline-none focus:border-purple-400"
-                    />
+                    <label className="text-sm text-neutral-400">
+                        Max Number of Connections
+                    </label>
+
+                    <div className="mt-2 flex items-center 
+                            border border-neutral-700 
+                            rounded-lg bg-black overflow-hidden
+                            transition-all duration-300
+                            focus-within:border-purple-400
+                            focus-within:ring-1 focus-within:ring-purple-400/40">
+
+                        {/* Decrement */}
+                        <button
+                            type="button"
+                            onClick={() => setMaxNodes((prev) => Math.max(0, Number(prev) - 1))}
+                            className="px-4 py-2 text-neutral-400 hover:text-white transition"
+                        >
+                            −
+                        </button>
+
+                        {/* Input */}
+                        <input
+                            type="text"
+                            value={maxNodes}
+                            onChange={(e) => setMaxNodes(e.target.value)}
+                            className="w-full text-center bg-black outline-none text-white"
+                        />
+
+                        {/* Increment */}
+                        <button
+                            type="button"
+                            onClick={() => setMaxNodes((prev) => Number(prev) + 1)}
+                            className="px-4 py-2 text-neutral-400 hover:text-white transition"
+                        >
+                            +
+                        </button>
+
+                    </div>
                 </div>
 
                 <div className="flex justify-end gap-4">
@@ -75,11 +140,13 @@ export default function InputPopup({ onClose }) {
 
                     <button
                         onClick={handleSubmit}
+                        disabled={loading}
                         className="px-5 py-2 rounded-lg 
-                       bg-gradient-to-r from-blue-500 via-purple-500 to-cyan-400
-                       text-white font-medium"
+                                bg-gradient-to-r from-blue-500 via-purple-500 to-cyan-400
+                                text-white font-medium
+                                disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                        Expand
+                        {loading ? "Expanding..." : "Expand"}
                     </button>
                 </div>
             </motion.div>
