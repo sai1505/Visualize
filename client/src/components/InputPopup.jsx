@@ -1,10 +1,12 @@
 import { useState } from "react"
 import { motion } from "framer-motion"
+import { useNavigate } from "react-router-dom"
 
 export default function InputPopup({ onClose }) {
     const [topic, setTopic] = useState("")
     const [maxNodes, setMaxNodes] = useState("");
     const [loading, setLoading] = useState(false);
+    const navigate = useNavigate();
 
     const handleSubmit = async () => {
         if (!topic || !maxNodes) return
@@ -31,11 +33,8 @@ export default function InputPopup({ onClose }) {
 
             console.log("Status:", response.status)
 
-            const text = await response.text()
-            console.log("Raw response:", text)
-
-            const data = JSON.parse(text)
-            console.log("Parsed:", data)
+            const data = await response.json()
+            navigate("/graph", { state: data })
 
             //const data = await response.json()
             //console.log("Backend response:", data)
