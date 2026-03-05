@@ -1,25 +1,33 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
-// ── Constants ──────────────────────────────────────────────────────────────────
-const PIERCE_START = 2.0;   // zoom where root card starts blooming
-const PIERCE_END = 3.2;   // zoom where child cards are fully revealed
-const ENTER_ZOOM = 6.5;   // zoom where we enter the hovered child
-const ZOOM_OUT_THRESHOLD = PIERCE_START - 0.2; // resurface when zooming back below where pierce begins
+const PIERCE_START = 2.0;
+const PIERCE_END = 3.2;
+const ENTER_ZOOM = 6.5;
+const ZOOM_OUT_THRESHOLD = PIERCE_START - 0.2;
 
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 14.0;
 
-const CHILD_COLORS = ["#4ade80", "#38bdf8", "#a78bfa", "#fb923c", "#f472b6"];
+// Art-system multi-color palette — each child gets a unique vibrant color
+const CHILD_COLORS = [
+    "#FF3CAC", // hot pink
+    "#00F5FF", // electric cyan
+    "#FFEA00", // vivid yellow
+    "#7B2FFF", // deep violet
+    "#00FF87", // neon green
+    "#FF6B35", // burning orange
+    "#FF007F", // rose red
+    "#39FF14", // acid green
+    "#BF5FFF", // lavender purple
+    "#00BFFF", // sky blue
+];
 
-const ROOT_W = 300;
-const ROOT_H = 180;
-const CARD_W = 220;
-const CARD_H = 165;
-
-// World-space gap between child cards (in logical px at zoom=1)
-// These are the positions child cards sit at in world space — they zoom WITH the scene
-const CARD_WORLD_GAP = 32;
+const ROOT_W = 220;
+const ROOT_H = 160;
+const CARD_W = 190;
+const CARD_H = 150; // taller to show full info
+const CARD_WORLD_GAP = 36;
 
 const API_BASE = "http://localhost:8000";
 
@@ -28,8 +36,6 @@ const easeIn = (t) => Math.pow(Math.min(1, Math.max(0, t)), 2);
 const lerp = (a, b, t) => a + (b - a) * t;
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
-// World-space positions for child cards, centered around (0,0)
-// All in logical world units — multiplied by zoom at render time
 function worldCardPositions(count) {
     const totalW = count * CARD_W + (count - 1) * CARD_WORLD_GAP;
     const startX = -totalW / 2 + CARD_W / 2;
@@ -39,7 +45,6 @@ function worldCardPositions(count) {
     }));
 }
 
-// Convert a world-space point to screen pixels
 function w2s(wx, wy, zoom, panX, panY, vw, vh) {
     return {
         sx: vw / 2 + panX + wx * zoom,
@@ -72,7 +77,6 @@ export default function GraphDashboard() {
 
     const graphId = graphData?.id;
 
-    // All mutable animation state — never triggers re-render
     const S = useRef({
         zoom: 1, targetZoom: 1,
         panX: 0, panY: 0,
@@ -87,7 +91,6 @@ export default function GraphDashboard() {
         zoomOutFired: false,
         rootOffX: 0,
         rootOffY: 0,
-        // Blanks out all cards for one rAF frame during node swap to prevent flicker
         swapping: false,
     }).current;
 
@@ -106,7 +109,6 @@ export default function GraphDashboard() {
         return () => window.removeEventListener("mousemove", onMove);
     }, [S]);
 
-    // ── Prefetch ─────────────────────────────────────────────────────────────────
     const prefetchNode = useCallback(async (child) => {
         if (expandedDataRef.current[child.id]) return;
         if (prefetchingRef.current.has(child.id)) return;
@@ -133,7 +135,6 @@ export default function GraphDashboard() {
         }
     }, [graphId]);
 
-    // ── rAF loop ──────────────────────────────────────────────────────────────────
     useEffect(() => {
         let raf;
         const loop = () => {
@@ -145,7 +146,6 @@ export default function GraphDashboard() {
             const children = node?.children || [];
             const { w: VW, h: VH } = vpRef.current;
 
-            // pierceT 0→1 drives root bloom + child reveal
             const pierceT = clamp(
                 (S.zoom - PIERCE_START) / (PIERCE_END - PIERCE_START), 0, 1
             );
@@ -153,21 +153,14 @@ export default function GraphDashboard() {
                 ? Math.min(1, S.childReveal + 0.025)
                 : Math.max(0, S.childReveal - 0.05);
 
-            // World-space child card positions (same every frame, don't depend on zoom)
             const wPos = worldCardPositions(children.length);
 
-            // ── Hover: hit-test each child card in world→screen coords ──────────────
-            // Cards ARE in world space so they scale+move naturally with zoom.
-            // Siblings stay on screen because the user can simply not zoom toward them —
-            // panning/zooming toward a sibling keeps it visible just like in the video.
             if (S.childReveal > 0.05 && children.length > 0 && !S.transitioning) {
                 let found = -1;
                 for (let i = 0; i < children.length; i++) {
-                    // child card world center = rootOff + worldCardPos
                     const worldX = S.rootOffX + wPos[i].x;
                     const worldY = S.rootOffY + wPos[i].y;
                     const { sx, sy } = w2s(worldX, worldY, S.zoom, S.panX, S.panY, VW, VH);
-                    // Card renders at zoom scale, hit-test in screen px
                     const hw = (CARD_W * S.zoom) / 2;
                     const hh = (CARD_H * S.zoom) / 2;
                     if (
@@ -183,35 +176,23 @@ export default function GraphDashboard() {
                 S.hoverChildIndex = -1;
             }
 
-            // ── Zoom-IN: enter hovered child when targetZoom ≥ ENTER_ZOOM ────────────
-            // The user zooms toward a specific child card. Siblings are still in world
-            // space — as the user zooms in toward one card, siblings naturally drift to
-            // the edges exactly like in the reference video.
             if (!S.transitioning && S.hoverChildIndex >= 0 && S.targetZoom >= ENTER_ZOOM) {
                 const idx = S.hoverChildIndex;
                 const child = children[idx];
                 const expanded = expandedDataRef.current[child?.id];
                 if (child && expanded) {
                     S.transitioning = true;
-
                     const saved = {
                         zoom: S.zoom, panX: S.panX, panY: S.panY,
                         rootOffX: S.rootOffX, rootOffY: S.rootOffY,
                     };
-
                     queueMicrotask(() => {
                         setNodeStack(prev => [...prev, { node: currentNodeRef.current, ...saved }]);
-
-                        // Enter already pierced — start at PIERCE_END so the new node's
-                        // children are immediately revealed. No re-piercing required.
                         S.zoom = PIERCE_END + 0.05;
                         S.targetZoom = PIERCE_END + 0.05;
-                        S.panX = 0;
-                        S.panY = 0;
-                        S.targetPanX = 0;
-                        S.targetPanY = 0;
-                        S.rootOffX = 0;
-                        S.rootOffY = 0;
+                        S.panX = 0; S.panY = 0;
+                        S.targetPanX = 0; S.targetPanY = 0;
+                        S.rootOffX = 0; S.rootOffY = 0;
                         S.childReveal = 0;
                         S.hoverChildIndex = -1;
                         S.transitioning = false;
@@ -221,7 +202,6 @@ export default function GraphDashboard() {
                 }
             }
 
-            // ── Zoom-OUT: resurface to parent ─────────────────────────────────────────
             if (!S.transitioning && nodeStackRef.current.length > 0
                 && S.targetZoom < ZOOM_OUT_THRESHOLD && !S.zoomOutFired) {
                 S.zoomOutFired = true;
@@ -230,17 +210,13 @@ export default function GraphDashboard() {
                     const entry = nodeStackRef.current[nodeStackRef.current.length - 1];
                     S.zoom = PIERCE_END + 0.05;
                     S.targetZoom = PIERCE_END + 0.05;
-                    S.panX = 0;
-                    S.panY = 0;
-                    S.targetPanX = 0;
-                    S.targetPanY = 0;
-                    S.rootOffX = 0;
-                    S.rootOffY = 0;
+                    S.panX = 0; S.panY = 0;
+                    S.targetPanX = 0; S.targetPanY = 0;
+                    S.rootOffX = 0; S.rootOffY = 0;
                     S.childReveal = 0;
                     S.hoverChildIndex = -1;
                     S.transitioning = false;
                     S.zoomOutFired = false;
-                    // Flash a black overlay for 2 frames to hide any card flicker during swap
                     setSwapFlash(true);
                     setTimeout(() => setSwapFlash(false), 80);
                     setNodeStack(s => s.slice(0, -1));
@@ -257,7 +233,6 @@ export default function GraphDashboard() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // ── Wheel: zoom toward cursor ─────────────────────────────────────────────────
     useEffect(() => {
         const el = wrapRef.current;
         if (!el) return;
@@ -267,7 +242,6 @@ export default function GraphDashboard() {
             const factor = e.deltaY < 0 ? 1.12 : 0.90;
             const oldZoom = S.targetZoom;
             const newZoom = clamp(oldZoom * factor, MIN_ZOOM, MAX_ZOOM);
-            // Zoom toward cursor — world point under cursor stays fixed on screen
             const cx = e.clientX - VW / 2;
             const cy = e.clientY - VH / 2;
             S.targetPanX = cx - (cx - S.targetPanX) * (newZoom / oldZoom);
@@ -316,7 +290,6 @@ export default function GraphDashboard() {
 
     if (!graphData) { navigate("/"); return null; }
 
-    // ── Render ────────────────────────────────────────────────────────────────────
     const isSwapping = S.swapping;
     const z = S.zoom;
     const pierceT = clamp((z - PIERCE_START) / (PIERCE_END - PIERCE_START), 0, 1);
@@ -328,20 +301,16 @@ export default function GraphDashboard() {
     const children = currentNode.children || [];
     const { w: VW, h: VH } = vp;
 
-    // Root card screen position (world-space → screen)
     const rootSc = w2s(S.rootOffX, S.rootOffY, z, S.panX, S.panY, VW, VH);
     const rootBloat = 1 + pierceT * 0.3;
-    const rootOpacity = isPierced ? 0
-        : clamp(1 - easeIn(pierceT * 1.1), 0, 1);
-    const flashOp = isPiercing ? easeIn(pierceT) * 0.18 : 0;
+    const rootOpacity = isPierced ? 0 : clamp(1 - easeIn(pierceT * 1.1), 0, 1);
+    const flashOp = isPiercing ? easeIn(pierceT) * 0.15 : 0;
 
-    // Child card world positions → screen positions (they move with zoom — correct!)
     const wPos = worldCardPositions(children.length);
     const childSc = wPos.map(p =>
         w2s(S.rootOffX + p.x, S.rootOffY + p.y, z, S.panX, S.panY, VW, VH)
     );
 
-    // Enter progress for hovered card
     const enterProg = hoverIdx >= 0
         ? clamp((S.targetZoom - PIERCE_END) / (ENTER_ZOOM - PIERCE_END), 0, 1)
         : 0;
@@ -360,102 +329,155 @@ export default function GraphDashboard() {
             onTouchMove={onTouchMove}
             onTouchEnd={() => { S.lastTouch = null; }}
             style={{
-                width: "100vw", height: "100vh", background: "#030712",
+                width: "95vw", height: "85vh",
+                background: "#000000",
                 overflow: "hidden", position: "relative",
                 cursor: S.isPanning ? "grabbing" : "grab",
                 userSelect: "none",
             }}
         >
             <style>{`
-                @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap');
-                * { box-sizing: border-box; }
-                @keyframes breathe {
-                    0%,100% { box-shadow:0 0 40px rgba(74,222,128,0.12),0 24px 70px rgba(0,0,0,0.7); }
-                    50%     { box-shadow:0 0 60px rgba(74,222,128,0.22),0 24px 70px rgba(0,0,0,0.7); }
-                }
-                @keyframes dotPulse {
-                    0%,100% { opacity:1; transform:scale(1); }
-                    50%     { opacity:0.2; transform:scale(0.6); }
-                }
-                @keyframes ripple {
-                    0%   { transform:scale(0.3); opacity:0.6; }
-                    100% { transform:scale(3);   opacity:0; }
-                }
-                @keyframes childRipple {
-                    0%   { transform:scale(0.5); opacity:0.4; }
-                    100% { transform:scale(2.2); opacity:0; }
-                }
-                @keyframes spin { to { transform:rotate(360deg); } }
-                @keyframes fadeUp {
-                    from { opacity:0; transform:translateY(6px) translateX(-50%); }
-                    to   { opacity:1; transform:translateY(0)   translateX(-50%); }
-                }
-                @keyframes outPulse {
-                    0%,100% { opacity:0.5; }
-                    50%     { opacity:1; }
-                }
-            `}</style>
+                    @import url('https://fonts.googleapis.com/css2?family=Permanent+Marker&family=Inter:wght@400;500;600;700&display=swap');
+                    * { box-sizing: border-box; }
 
-            {/* BG ambient */}
+                    @keyframes breathe {
+                        0%,100% { box-shadow: 0 0 30px rgba(255,255,255,0.04), 0 24px 60px rgba(0,0,0,0.9); }
+                        50%     { box-shadow: 0 0 50px rgba(255,255,255,0.08), 0 24px 60px rgba(0,0,0,0.9); }
+                    }
+                    @keyframes dotPulse {
+                        0%,100% { opacity:1; transform:scale(1); }
+                        50%     { opacity:0.3; transform:scale(0.5); }
+                    }
+                    @keyframes ripple {
+                        0%   { transform:scale(0.3); opacity:0.5; }
+                        100% { transform:scale(3);   opacity:0; }
+                    }
+                    @keyframes childRipple {
+                        0%   { transform:scale(0.5); opacity:0.45; }
+                        100% { transform:scale(2.4); opacity:0; }
+                    }
+                    @keyframes spin { to { transform:rotate(360deg); } }
+                    @keyframes fadeUp {
+                        from { opacity:0; transform:translateY(8px) translateX(-50%); }
+                        to   { opacity:1; transform:translateY(0)   translateX(-50%); }
+                    }
+                    @keyframes outPulse {
+                        0%,100% { opacity:0.5; }
+                        50%     { opacity:1; }
+                    }
+                    @keyframes shimmer {
+                        0%   { background-position: -200% center; }
+                        100% { background-position: 200% center; }
+                    }
+                    @keyframes artGlow {
+                        0%   { opacity: 0.6; }
+                        33%  { opacity: 1; }
+                        66%  { opacity: 0.7; }
+                        100% { opacity: 0.6; }
+                    }
+                `}</style>
+
+            {/* Subtle grid overlay for depth */}
             <div style={{
-                position: "absolute", inset: 0, pointerEvents: "none",
-                background: isPierced
-                    ? "radial-gradient(ellipse 70% 60% at 50% 50%,rgba(56,189,248,0.04) 0%,transparent 70%)"
-                    : "radial-gradient(ellipse 55% 55% at 50% 50%,rgba(74,222,128,0.03) 0%,transparent 70%)",
-                transition: "background 1.2s",
-            }} />
-            <div style={{
-                position: "absolute", inset: 0, pointerEvents: "none", zIndex: 60,
-                backgroundImage: "repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,0.012) 3px,rgba(0,0,0,0.012) 4px)",
+                position: "absolute", inset: 0, pointerEvents: "none", zIndex: 1,
+                backgroundImage: `
+                        linear-gradient(rgba(255,255,255,0.015) 1px, transparent 1px),
+                        linear-gradient(90deg, rgba(255,255,255,0.015) 1px, transparent 1px)
+                    `,
+                backgroundSize: "60px 60px",
             }} />
 
-            {/* ── Root card — world-space, scales with zoom ── */}
-            {!isSwapping && <div style={{
-                position: "absolute",
-                width: ROOT_W, height: ROOT_H,
-                // Position via top-left + scale from top-left so math is clean
-                left: rootSc.sx - (ROOT_W * z * rootBloat) / 2,
-                top: rootSc.sy - (ROOT_H * z * rootBloat) / 2,
-                transform: `scale(${z * rootBloat})`,
-                transformOrigin: "top left",
-                opacity: rootOpacity,
-                pointerEvents: isPierced ? "none" : "auto",
-                background: "linear-gradient(150deg,rgba(12,20,40,0.97) 0%,rgba(18,28,52,0.95) 60%,rgba(10,18,36,0.97) 100%)",
-                border: "1px solid rgba(74,222,128,0.35)",
-                borderRadius: 18, padding: "20px 22px 16px",
-                backdropFilter: "blur(28px)",
-                boxShadow: "0 0 0 1px rgba(74,222,128,0.04),0 24px 70px rgba(0,0,0,0.75),inset 0 1px 0 rgba(255,255,255,0.05)",
-                animation: !isPiercing && !isPierced ? "breathe 3.2s ease-in-out infinite" : "none",
-                fontFamily: "'Space Mono',monospace", zIndex: 10, overflow: "hidden",
-            }}>
-                <div style={{ position: "absolute", top: 0, left: 22, right: 22, height: 1, background: "linear-gradient(90deg,transparent,rgba(74,222,128,0.45),transparent)" }} />
-                <div style={{ position: "absolute", top: 16, bottom: 16, left: 0, width: 2, borderRadius: "0 2px 2px 0", background: "linear-gradient(180deg,transparent,rgba(74,222,128,0.38),transparent)" }} />
-                <div style={{ fontSize: 9, letterSpacing: "0.2em", color: "#4ade80", textTransform: "uppercase", fontWeight: 700, marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#4ade80", display: "inline-block", boxShadow: "0 0 9px #4ade80", animation: "dotPulse 1.8s ease-in-out infinite", flexShrink: 0 }} />
-                    {currentNode.depth === 0 ? "Root · Depth 0" : `Node · Depth ${currentNode.depth}`}
-                </div>
-                <div style={{ fontSize: 15, fontWeight: 700, color: "#e2f0ff", lineHeight: 1.3, marginBottom: 10, letterSpacing: "-0.02em" }}>
-                    {currentNode.title}
-                </div>
-                <div style={{ fontSize: 10, color: "#3a5070", lineHeight: 1.65, borderTop: "1px solid rgba(74,222,128,0.07)", paddingTop: 10 }}>
-                    {currentNode.description}
-                </div>
-                <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span style={{ fontSize: 9, color: "#1a2e40", letterSpacing: "0.1em", textTransform: "uppercase" }}>{children.length} nodes</span>
-                    <span style={{ fontSize: 9, color: "#4ade80", letterSpacing: "0.1em", textTransform: "uppercase", opacity: pierceT === 0 ? 0.65 : 0, transition: "opacity 0.3s", animation: "dotPulse 2.5s ease-in-out infinite" }}>
-                        scroll to pierce →
-                    </span>
-                </div>
-                {isPiercing && [0, 1, 2].map(i => (
-                    <div key={i} style={{
-                        position: "absolute", width: "100%", height: "100%",
-                        border: "1px solid rgba(74,222,128,0.28)", borderRadius: 18, top: 0, left: 0, pointerEvents: "none",
-                        animation: `ripple ${0.85 + i * 0.28}s ease-out ${i * 0.22}s infinite`, transformOrigin: "center center",
+            {/* Scanline texture */}
+            <div style={{
+                position: "absolute", inset: 0, pointerEvents: "none", zIndex: 2,
+                backgroundImage: "repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.08) 2px,rgba(0,0,0,0.08) 3px)",
+            }} />
+
+            {/* ── Root card ── */}
+            {!isSwapping && (
+                <div style={{
+                    position: "absolute",
+                    width: ROOT_W, height: ROOT_H,
+                    left: rootSc.sx - (ROOT_W * z * rootBloat) / 2,
+                    top: rootSc.sy - (ROOT_H * z * rootBloat) / 2,
+                    transform: `scale(${z * rootBloat})`,
+                    transformOrigin: "top left",
+                    opacity: rootOpacity,
+                    pointerEvents: isPierced ? "none" : "auto",
+                    background: "#000",
+                    border: "1.5px solid rgba(255,255,255,0.12)",
+                    borderRadius: 16,
+                    padding: "20px 22px 16px",
+                    boxShadow: "0 0 0 1px rgba(255,255,255,0.04), 0 32px 80px rgba(0,0,0,1), inset 0 1px 0 rgba(255,255,255,0.06)",
+                    animation: !isPiercing && !isPierced ? "breathe 3.5s ease-in-out infinite" : "none",
+                    fontFamily: "Inter, sans-serif",
+                    zIndex: 10,
+                    overflow: "hidden",
+                }}>
+                    {/* Top white accent line */}
+                    <div style={{
+                        position: "absolute", top: 0, left: 0, right: 0, height: 2, borderRadius: "16px 16px 0 0",
+                        background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.5), transparent)",
                     }} />
-                ))}
-            </div>}
 
-            {/* ── Child cards — world-space, zoom WITH the scene like in the video ── */}
+                    {/* Depth badge */}
+                    <div style={{
+                        fontSize: 9, letterSpacing: "0.2em", color: "rgba(255,255,255,0.35)",
+                        textTransform: "uppercase", fontWeight: 600, marginBottom: 10,
+                        display: "flex", alignItems: "center", gap: 7, fontFamily: "Inter, sans-serif",
+                    }}>
+                        <span style={{
+                            width: 6, height: 6, borderRadius: "50%", background: "#fff",
+                            display: "inline-block", boxShadow: "0 0 8px rgba(255,255,255,0.8)",
+                            animation: "dotPulse 2s ease-in-out infinite", flexShrink: 0,
+                        }} />
+                        {currentNode.depth === 0 ? "Root · Depth 0" : `Node · Depth ${currentNode.depth}`}
+                    </div>
+
+                    {/* Title — Permanent Marker */}
+                    <div style={{
+                        fontSize: 15, fontWeight: 400, color: "#ffffff",
+                        lineHeight: 1.25, marginBottom: 10,
+                        fontFamily: "'Permanent Marker', cursive",
+                        letterSpacing: "0.01em",
+                        textShadow: "0 0 20px rgba(255,255,255,0.15)",
+                    }}>
+                        {currentNode.title}
+                    </div>
+
+                    {/* Description */}
+                    <div style={{
+                        fontSize: 8, color: "rgba(255,255,255,0.38)",
+                        lineHeight: 1.7, borderTop: "1px solid rgba(255,255,255,0.06)",
+                        paddingTop: 10, fontFamily: "Inter, sans-serif",
+                    }}>
+                        {currentNode.description}
+                    </div>
+
+                    {/* Footer */}
+                    <div style={{
+                        marginTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center",
+                        fontFamily: "Inter, sans-serif",
+                    }}>
+                        <span style={{ fontSize: 9, color: "rgba(255,255,255,0.18)", letterSpacing: "0.1em", textTransform: "uppercase" }}>
+                            {children.length} nodes
+                        </span>
+                    </div>
+
+                    {/* Ripple rings on pierce */}
+                    {isPiercing && [0, 1, 2].map(i => (
+                        <div key={i} style={{
+                            position: "absolute", width: "100%", height: "100%",
+                            border: "1px solid rgba(255,255,255,0.2)", borderRadius: 16,
+                            top: 0, left: 0, pointerEvents: "none",
+                            animation: `ripple ${0.85 + i * 0.28}s ease-out ${i * 0.22}s infinite`,
+                            transformOrigin: "center center",
+                        }} />
+                    ))}
+                </div>
+            )}
+
+            {/* ── Child cards ── */}
             {!isSwapping && children.map((child, i) => {
                 const sc = childSc[i];
                 const color = CHILD_COLORS[i % CHILD_COLORS.length];
@@ -464,97 +486,154 @@ export default function GraphDashboard() {
                 const isFetching = prefetchingIds.has(child.id);
                 const isReady = !!expandedData[child.id];
                 const ep = isHov ? enterProg : 0;
-
-                // Cards scale with world zoom — this is what makes them grow as you zoom in
-                // Siblings stay visible because the user zooms toward ONE card; others drift
-                // to the edges naturally (same physics as the reference video)
-                const cardScale = z; // world-space: the card's visual size = CARD_W * z px
-                // Hovered card gets a tiny extra pulse as ep grows
+                const cardScale = z;
                 const hoverBump = isHov ? 1 + ep * 0.04 : 1;
-
-                // All sibling cards: fully opaque, never dim. Only enter-progress affects hovered.
                 const opacity = easeOut(revT);
+
+                // Multi-color glow on hover — cycling through the palette
+                const glowColor = color;
+                const glowSize = isHov ? 40 + ep * 60 : 0;
 
                 return (
                     <div key={child.id} style={{
                         position: "absolute",
                         width: CARD_W, height: CARD_H,
-                        // Center the card on its world→screen position
                         left: sc.sx - (CARD_W * cardScale * hoverBump) / 2,
                         top: sc.sy - (CARD_H * cardScale * hoverBump) / 2,
-                        // Scale from top-left (matching how left/top are computed)
                         transform: `scale(${cardScale * hoverBump})`,
                         transformOrigin: "top left",
                         opacity,
-                        background: "linear-gradient(145deg,rgba(12,20,40,0.97) 0%,rgba(16,26,46,0.95) 100%)",
-                        border: isHov ? `1.5px solid ${color}dd` : `1px solid ${color}30`,
-                        borderRadius: 12, padding: "12px 14px 10px",
+                        background: "#000",
+                        border: isHov
+                            ? `1.5px solid ${color}`
+                            : "1px solid rgba(255,255,255,0.09)",
+                        borderRadius: 14,
+                        padding: "14px 16px 12px",
                         boxShadow: isHov
-                            ? `0 0 0 1px ${color}18,0 12px 48px rgba(0,0,0,0.85),0 0 ${16 + ep * 40}px ${color}${Math.round(40 + ep * 100).toString(16).padStart(2, "0")},inset 0 1px 0 rgba(255,255,255,0.06)`
-                            : `0 0 0 1px ${color}08,0 6px 24px rgba(0,0,0,0.55),inset 0 1px 0 rgba(255,255,255,0.03)`,
-                        fontFamily: "'Space Mono',monospace",
+                            ? `0 0 0 1px ${color}22, 0 16px 60px rgba(0,0,0,0.95), 0 0 ${glowSize}px ${color}55, inset 0 1px 0 rgba(255,255,255,0.07)`
+                            : "0 0 0 1px rgba(255,255,255,0.03), 0 8px 30px rgba(0,0,0,0.8), inset 0 1px 0 rgba(255,255,255,0.03)",
+                        fontFamily: "Inter, sans-serif",
                         zIndex: isHov ? 11 : 9,
-                        overflow: "hidden", display: "flex", flexDirection: "column",
+                        overflow: "hidden",
+                        display: "flex", flexDirection: "column",
                         pointerEvents: childReveal > 0.2 ? "auto" : "none",
+                        transition: "border-color 0.2s, box-shadow 0.2s",
                     }}>
-                        {/* Top accent */}
+                        {/* Top color accent bar */}
                         <div style={{
                             position: "absolute", top: 0, left: 0, right: 0,
-                            height: isHov ? 3 : 2, borderRadius: "12px 12px 0 0",
-                            background: `linear-gradient(90deg,transparent,${color}${isHov ? "bb" : "50"},transparent)`,
+                            height: isHov ? 3 : 1.5, borderRadius: "14px 14px 0 0",
+                            background: isHov
+                                ? `linear-gradient(90deg, transparent, ${color}, ${CHILD_COLORS[(i + 2) % CHILD_COLORS.length]}, ${color}, transparent)`
+                                : `linear-gradient(90deg, transparent, ${color}60, transparent)`,
+                            backgroundSize: isHov ? "200% auto" : "100%",
+                            animation: isHov ? "shimmer 2s linear infinite" : "none",
                         }} />
-                        {/* Enter-progress fill on bottom edge */}
+
+                        {/* Enter-progress fill — bottom bar */}
                         {isHov && ep > 0 && (
                             <div style={{
                                 position: "absolute", bottom: 0, left: 0,
                                 width: `${ep * 100}%`, height: 2,
-                                background: `linear-gradient(90deg,${color}55,${color})`,
-                                borderRadius: "0 0 0 12px",
+                                background: `linear-gradient(90deg, ${color}80, ${color})`,
+                                borderRadius: "0 0 0 14px",
                             }} />
                         )}
-                        {/* Corner dot */}
+
+                        {/* Corner color dot */}
                         <div style={{
-                            position: "absolute", top: 10, right: 10,
-                            width: isHov ? 6 : 4, height: isHov ? 6 : 4,
-                            borderRadius: "50%", background: color,
-                            boxShadow: `0 0 ${isHov ? 11 : 5}px ${color}`, opacity: isHov ? 1 : 0.38,
+                            position: "absolute", top: 12, right: 12,
+                            width: isHov ? 8 : 5, height: isHov ? 8 : 5,
+                            borderRadius: "50%",
+                            background: isHov ? color : "rgba(255,255,255,0.2)",
+                            boxShadow: isHov ? `0 0 14px ${color}` : "none",
+                            transition: "all 0.2s",
                         }} />
 
-                        {/* Badge */}
-                        <div style={{ fontSize: 7.5, letterSpacing: "0.12em", color, textTransform: "uppercase", fontWeight: 700, marginBottom: 5, opacity: 0.8, display: "flex", alignItems: "center", gap: 4 }}>
+                        {/* Badge row */}
+                        <div style={{
+                            fontSize: 5.5, letterSpacing: "0.12em",
+                            color: isHov ? color : "rgba(255,255,255,0.25)",
+                            textTransform: "uppercase", fontWeight: 600,
+                            marginBottom: 7, display: "flex", alignItems: "center", gap: 5,
+                            fontFamily: "Inter, sans-serif",
+                            transition: "color 0.2s",
+                        }}>
                             {isFetching
-                                ? <><span style={{ display: "inline-block", width: 6, height: 6, border: `1.5px solid ${color}35`, borderTopColor: color, borderRadius: "50%", animation: "spin 0.7s linear infinite" }} />fetching</>
+                                ? <><span style={{
+                                    display: "inline-block", width: 7, height: 7,
+                                    border: `1.5px solid ${color}40`, borderTopColor: color,
+                                    borderRadius: "50%", animation: "spin 0.7s linear infinite",
+                                }} />fetching</>
                                 : isReady
                                     ? (isHov && ep > 0.05 ? `◉ entering ${Math.round(ep * 100)}%` : "◈ ready")
                                     : child.has_children ? "◆ node" : "◇ leaf"
-                            }{" "}· d{child.depth}
+                            }{" "}· depth {child.depth}
                         </div>
 
-                        <div style={{ fontSize: 11.5, fontWeight: 700, color: "#dde8f5", lineHeight: 1.3, marginBottom: 5, letterSpacing: "-0.01em" }}>
+                        {/* Title — Permanent Marker */}
+                        <div style={{
+                            fontSize: 12,
+                            fontFamily: "'Permanent Marker', cursive",
+                            color: isHov ? "#ffffff" : "rgba(255,255,255,0.82)",
+                            lineHeight: 1.3, marginBottom: 8,
+                            textShadow: isHov ? `0 0 20px ${color}60` : "none",
+                            transition: "text-shadow 0.2s, color 0.2s",
+                        }}>
                             {child.title}
                         </div>
-                        <div style={{ fontSize: 9, color: "#344455", lineHeight: 1.58, borderTop: `1px solid ${color}10`, paddingTop: 6, flex: 1, overflow: "hidden" }}>
-                            {(child.description || "").length > 80
-                                ? child.description.slice(0, 80) + "…"
-                                : child.description}
+
+                        {/* Divider */}
+                        <div style={{
+                            width: "100%", height: 1,
+                            background: isHov
+                                ? `linear-gradient(90deg, transparent, ${color}50, transparent)`
+                                : "rgba(255,255,255,0.05)",
+                            marginBottom: 8, flexShrink: 0,
+                            transition: "background 0.2s",
+                        }} />
+
+                        {/* Full description — Inter, no truncation */}
+                        <div style={{
+                            fontSize: 6,
+                            color: isHov ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.28)",
+                            lineHeight: 1.65, flex: 1,
+                            fontFamily: "Inter, sans-serif",
+                            transition: "color 0.2s",
+                            wordBreak: "break-word",
+                            overflowWrap: "break-word",
+                            overflow: "hidden",
+                        }}>
+                            {child.description || "No description available."}
                         </div>
 
+                        {/* Fetching state footer */}
                         {isHov && !isReady && child.has_children && (
                             <div style={{
-                                marginTop: 5, padding: "3px 0", border: `1px solid ${color}18`, borderRadius: 5,
-                                background: "rgba(255,255,255,0.01)", color: `${color}50`, fontSize: 7,
-                                letterSpacing: "0.11em", textTransform: "uppercase", fontWeight: 700,
-                                textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
+                                marginTop: 7, padding: "4px 0",
+                                border: `1px solid ${color}20`, borderRadius: 6,
+                                background: `${color}06`,
+                                color: `${color}60`, fontSize: 7.5,
+                                letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 600,
+                                textAlign: "center", display: "flex", alignItems: "center",
+                                justifyContent: "center", gap: 5, flexShrink: 0,
+                                fontFamily: "Inter, sans-serif",
                             }}>
-                                <span style={{ display: "inline-block", width: 6, height: 6, border: `1.5px solid ${color}35`, borderTopColor: color, borderRadius: "50%", animation: "spin 0.7s linear infinite" }} />
-                                fetching…
+                                <span style={{
+                                    display: "inline-block", width: 6, height: 6,
+                                    border: `1.5px solid ${color}35`, borderTopColor: color,
+                                    borderRadius: "50%", animation: "spin 0.7s linear infinite",
+                                }} />
+                                fetching deeper nodes…
                             </div>
                         )}
 
+                        {/* Hover ripple rings */}
                         {isHov && [0, 1, 2].map(ri => (
                             <div key={ri} style={{
                                 position: "absolute", width: "100%", height: "100%",
-                                border: `1px solid ${color}28`, borderRadius: 12, top: 0, left: 0, pointerEvents: "none",
+                                border: `1px solid ${color}30`, borderRadius: 14,
+                                top: 0, left: 0, pointerEvents: "none",
                                 animation: `childRipple ${0.9 + ri * 0.28}s ease-out ${ri * 0.24}s infinite`,
                                 transformOrigin: "center center",
                             }} />
@@ -563,17 +642,39 @@ export default function GraphDashboard() {
                 );
             })}
 
-            {/* Swap flash — instant black cover during node transition to hide any flicker */}
+            {/* Swap flash */}
             {swapFlash && (
-                <div style={{ position: "absolute", inset: 0, background: "#030712", zIndex: 100, pointerEvents: "none" }} />
+                <div style={{
+                    position: "absolute", inset: 0, background: "#000",
+                    zIndex: 100, pointerEvents: "none",
+                }} />
             )}
-            <div style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 30, background: "radial-gradient(ellipse 35% 35% at 50% 50%,rgba(74,222,128,0.12) 0%,transparent 65%)", opacity: flashOp }} />
-            <div style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 31, background: "rgba(200,255,225,1)", opacity: pierceT > 0.88 && !isPierced ? (1 - pierceT) / 0.12 * 0.07 : 0 }} />
+
+            {/* Pierce flash overlay */}
+            <div style={{
+                position: "absolute", inset: 0, pointerEvents: "none", zIndex: 30,
+                background: "radial-gradient(ellipse 40% 40% at 50% 50%, rgba(255,255,255,0.06) 0%, transparent 70%)",
+                opacity: flashOp,
+            }} />
+            <div style={{
+                position: "absolute", inset: 0, pointerEvents: "none", zIndex: 31,
+                background: "rgba(255,255,255,1)",
+                opacity: pierceT > 0.88 && !isPierced ? (1 - pierceT) / 0.12 * 0.05 : 0,
+            }} />
 
             {/* Zoom-out overlay */}
             {zoomOutProg > 0 && (
-                <div style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 40, background: `rgba(8,14,30,${zoomOutProg * 0.45})`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <div style={{ fontFamily: "'Space Mono',monospace", fontSize: 10, color: "#4ade80", letterSpacing: "0.18em", textTransform: "uppercase", opacity: zoomOutProg, animation: "outPulse 0.9s ease-in-out infinite" }}>
+                <div style={{
+                    position: "absolute", inset: 0, pointerEvents: "none", zIndex: 40,
+                    background: `rgba(0,0,0,${zoomOutProg * 0.5})`,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                }}>
+                    <div style={{
+                        fontFamily: "Inter, sans-serif", fontSize: 10,
+                        color: "rgba(255,255,255,0.6)", letterSpacing: "0.2em",
+                        textTransform: "uppercase", opacity: zoomOutProg,
+                        animation: "outPulse 0.9s ease-in-out infinite",
+                    }}>
                         ← resurfacing…
                     </div>
                 </div>
@@ -583,67 +684,88 @@ export default function GraphDashboard() {
             {nodeStack.length > 0 && (
                 <button onClick={goBack} style={{
                     position: "absolute", top: 22, left: "50%", transform: "translateX(-50%)",
-                    zIndex: 55, background: "rgba(12,20,40,0.92)",
-                    border: "1px solid rgba(74,222,128,0.22)", borderRadius: 8, padding: "7px 18px",
-                    color: "#4ade80", fontSize: 9, letterSpacing: "0.14em", textTransform: "uppercase",
-                    fontWeight: 700, fontFamily: "'Space Mono',monospace", cursor: "pointer",
-                    backdropFilter: "blur(12px)", boxShadow: "0 4px 20px rgba(0,0,0,0.5)",
-                    display: "flex", alignItems: "center", gap: 8, animation: "fadeUp 0.3s ease",
+                    zIndex: 55,
+                    width: "350px",
+                    background: "#000",
+                    border: "1px solid rgba(255,255,255,0.15)",
+                    justifyContent: "center",
+                    borderRadius: 8, padding: "7px 20px",
+                    color: "rgba(255,255,255,0.7)", fontSize: 9,
+                    letterSpacing: "0.15em", textTransform: "uppercase",
+                    fontWeight: 600, fontFamily: "Inter, sans-serif", cursor: "pointer",
+                    backdropFilter: "blur(12px)",
+                    boxShadow: "0 4px 20px rgba(0,0,0,0.7)",
+                    display: "flex", alignItems: "center", gap: 8,
+                    animation: "fadeUp 0.3s ease",
                 }}>
-                    ← {nodeStack[nodeStack.length - 1]?.node?.title?.slice(0, 24) || "Root"}
+                    ← {nodeStack[nodeStack.length - 1]?.node?.title}
                 </button>
             )}
 
-            {/* Breadcrumb */}
-            {nodeStack.length > 0 && (
-                <div style={{ position: "absolute", bottom: 85, left: "50%", transform: "translateX(-50%)", zIndex: 50, display: "flex", alignItems: "center", gap: 5, fontFamily: "'Space Mono',monospace", fontSize: 7.5, color: "#1e3040", letterSpacing: "0.09em", textTransform: "uppercase", pointerEvents: "none", whiteSpace: "nowrap" }}>
-                    {nodeStack.map((e, i) => (
-                        <span key={i} style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                            <span style={{ color: "#172535" }}>{e.node?.title?.slice(0, 10) || "Root"}</span>
-                            <span style={{ color: "#0e1c28" }}>›</span>
-                        </span>
-                    ))}
-                    <span style={{ color: "#4ade80" }}>{currentNode.title?.slice(0, 10)}</span>
-                </div>
-            )}
-
             {/* HUD top-left */}
-            <div style={{ position: "absolute", top: 22, left: 26, zIndex: 50, fontFamily: "'Space Mono',monospace", lineHeight: 1.9 }}>
-                <div style={{ fontSize: 10, color: "#4ade80", letterSpacing: "0.17em", textTransform: "uppercase" }}>◈ Semantic Zoom</div>
-                <div style={{ fontSize: 9, color: "#162030", letterSpacing: "0.1em", textTransform: "uppercase" }}>
+            <div style={{
+                position: "absolute", top: 22, left: 26, zIndex: 50,
+                fontFamily: "Inter, sans-serif", lineHeight: 1.9,
+            }}>
+                <div style={{
+                    fontSize: 11, color: "rgba(255,255,255,0.5)",
+                    letterSpacing: "0.15em", textTransform: "uppercase", fontWeight: 600,
+                }}>
+                    Semantic Zoom
+                </div>
+                <div style={{ fontSize: 9, color: "rgba(255, 255, 255, 0.49)", letterSpacing: "0.1em", textTransform: "uppercase" }}>
                     {isPierced ? `depth ${currentNode.depth + 1}` : isPiercing ? "piercing…" : `depth ${currentNode.depth}`}
                 </div>
             </div>
 
             {/* HUD top-right */}
-            <div style={{ position: "absolute", top: 22, right: 26, zIndex: 50, fontFamily: "'Space Mono',monospace", textAlign: "right", lineHeight: 1.9 }}>
-                <div style={{ fontSize: 10, color: "#162030" }}>
-                    zoom <span style={{ color: zoomOutProg > 0 ? "#fb923c" : isPierced ? "#4ade80" : isPiercing ? "#fb923c" : "#1e3040" }}>{z.toFixed(2)}×</span>
+            <div style={{
+                position: "absolute", top: 22, right: 26, zIndex: 50,
+                fontFamily: "Inter, sans-serif", textAlign: "right", lineHeight: 1.9,
+            }}>
+                <div style={{ fontSize: 10, color: "rgba(255, 255, 255, 0.49)" }}>
+                    ZOOM  <span className="ms-2" style={{
+                        color: zoomOutProg > 0 ? "#FF6B35"
+                            : isPierced ? "#00FF87"
+                                : isPiercing ? "#FF3CAC"
+                                    : "rgba(255,255,255,0.35)",
+                        fontWeight: 600,
+                    }}>{z.toFixed(2)}×</span>
                 </div>
-                <div style={{ fontSize: 9, color: "#0e1c2a" }}>{nodeStack.length > 0 ? "scroll out to resurface" : `pierce at ${PIERCE_END}×`}</div>
+                <div style={{ fontSize: 9, color: "rgba(255, 255, 255, 0.49)" }}>
+                    {nodeStack.length > 0 ? "scroll out to resurface" : `pierce at ${PIERCE_END}×`}
+                </div>
             </div>
 
             {/* HUD bottom */}
-            <div style={{ position: "absolute", bottom: 24, left: "50%", transform: "translateX(-50%)", display: "flex", flexDirection: "column", alignItems: "center", gap: 8, pointerEvents: "none", zIndex: 50, fontFamily: "'Space Mono',monospace" }}>
+            <div style={{
+                position: "absolute", bottom: 24, left: "50%", transform: "translateX(-50%)",
+                display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
+                pointerEvents: "none", zIndex: 50, fontFamily: "Inter, sans-serif",
+            }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <span style={{ fontSize: 9, color: "#162030", letterSpacing: "0.1em", textTransform: "uppercase" }}>root</span>
-                    <div style={{ width: 140, height: 2, background: "rgba(255,255,255,0.04)", borderRadius: 2, overflow: "hidden" }}>
+                    <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", letterSpacing: "0.1em", textTransform: "uppercase" }}>root</span>
+                    <div style={{
+                        width: 140, height: 2, background: "rgba(255,255,255,0.06)",
+                        borderRadius: 2, overflow: "hidden",
+                    }}>
                         <div style={{
                             height: "100%",
                             width: `${clamp((z - MIN_ZOOM) / (ENTER_ZOOM - MIN_ZOOM), 0, 1) * 100}%`,
-                            background: zoomOutProg > 0 ? "linear-gradient(90deg,#fb923c,#4ade80)" : isPierced ? `linear-gradient(90deg,#4ade80,${hoverIdx >= 0 ? "#38bdf8" : "#4ade80"})` : isPiercing ? "linear-gradient(90deg,#4ade80,#fb923c)" : "#4ade8030",
+                            background: zoomOutProg > 0
+                                ? "linear-gradient(90deg,#FF6B35,#FFEA00)"
+                                : isPierced
+                                    ? `linear-gradient(90deg,#00FF87,${hoverIdx >= 0 ? CHILD_COLORS[hoverIdx % CHILD_COLORS.length] : "#00F5FF"})`
+                                    : isPiercing
+                                        ? "linear-gradient(90deg,#FF3CAC,#7B2FFF)"
+                                        : "rgba(255,255,255,0.15)",
                             borderRadius: 2, transition: "background 0.4s",
                         }} />
                     </div>
-                    <span style={{ fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: isPierced ? "#4ade80" : "#162030" }}>graph</span>
-                </div>
-                <div style={{ fontSize: 8.5, color: "#162030", letterSpacing: "0.09em", textTransform: "uppercase", opacity: 0.5 }}>
-                    {zoomOutProg > 0
-                        ? "keep scrolling out to resurface…"
-                        : isPierced
-                            ? (hoverIdx >= 0 ? `zoom in to enter · ${Math.round(enterProg * 100)}% — or hover another card` : "hover a card · zoom in toward it · scroll out to go back")
-                            : isPiercing ? "keep scrolling…"
-                                : "scroll to zoom · drag to pan"}
+                    <span style={{
+                        fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase",
+                        color: isPierced ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.18)",
+                    }}>graph</span>
                 </div>
             </div>
         </div>

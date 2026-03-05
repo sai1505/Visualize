@@ -76,12 +76,15 @@ export default function InputPopup({ onClose }) {
                 {/* Topic */}
                 <div className="mb-4">
                     <label className="text-sm text-neutral-400">Topic</label>
-                    <input
-                        type="text"
+
+                    <textarea
                         value={topic}
                         onChange={(e) => setTopic(e.target.value)}
-                        className="mt-1 w-full px-4 py-2 bg-black border border-neutral-700 
-                       rounded-lg focus:outline-none focus:border-blue-400"
+                        rows={4}
+                        placeholder="Enter your prompt..."
+                        className="mt-1 w-full px-4 py-2 bg-black border border-neutral-700
+                            rounded-lg focus:outline-none focus:border-blue-400
+                            resize-none text-sm"
                     />
                 </div>
 

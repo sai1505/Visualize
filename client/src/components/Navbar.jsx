@@ -1,10 +1,10 @@
 import { useState } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { ArrowRight } from "lucide-react"
-import InputPopup from "./InputPopup"
+import { useNavigate } from "react-router-dom"
 
 export default function Navbar() {
-    const [open, setOpen] = useState(false);
+    const navigate = useNavigate();
 
     return (
         <>
@@ -23,7 +23,9 @@ export default function Navbar() {
 
 
                     <motion.button
-                        onClick={() => setOpen(true)}
+                        onClick={() => {
+                            navigate("/");
+                        }}
                         whileHover="hover"
                         whileTap={{ scale: 0.96 }}
                         initial="rest"
@@ -48,7 +50,7 @@ export default function Navbar() {
                         <span className="absolute inset-[1.5px] rounded-full bg-black" />
 
                         {/* Text */}
-                        <span className="relative z-10">Try It</span>
+                        <span className="relative z-10">Home</span>
 
                         {/* Arrow */}
                         <motion.span
@@ -65,10 +67,6 @@ export default function Navbar() {
                     </motion.button>
                 </div>
             </nav>
-
-            <AnimatePresence>
-                {open && <InputPopup onClose={() => setOpen(false)} />}
-            </AnimatePresence>
         </>
     )
 }

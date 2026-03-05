@@ -1,4 +1,11 @@
+import { useState } from "react"
+import { motion, AnimatePresence } from "framer-motion"
+import { ArrowRight } from "lucide-react"
+import InputPopup from "./InputPopup"
+
 export default function Home() {
+    const [open, setOpen] = useState(false);
+
     return (
         <section className="min-h-[80vh] flex flex-col items-center justify-center text-center px-6 bg-black text-white">
 
@@ -53,7 +60,7 @@ export default function Home() {
                    h-[3px] w-full
                    scale-x-0 group-hover:scale-x-100
                    origin-center
-                   bg-gradient-to-r from-blue-500 via-purple-500 via-pink-500 to-emerald-400
+                   bg-gradient-to-r from-blue-400 via-purple-400 via-pink-400 via-yellow-300 to-emerald-400
                    transition-transform duration-500 ease-out"
                                 />
                             </div>
@@ -77,6 +84,54 @@ export default function Home() {
                 explore relationships, and interpret data in a clear, intuitive way.
             </p>
 
+            <motion.button
+                onClick={() => setOpen(true)}
+                whileHover="hover"
+                whileTap={{ scale: 0.96 }}
+                initial="rest"
+                animate="rest"
+                className="relative px-7 py-2.5 rounded-full mt-10
+                bg-black text-white text-md border border-neutral-700
+                overflow-hidden group flex items-center gap-3
+                tracking-[0.30em]
+                transition-all duration-300"
+                style={{ fontFamily: "'Permanent Marker', system-ui, sans-serif" }}
+            >
+
+                {/* Animated Border Layer */}
+                <span className="absolute inset-0 rounded-full p-[1.5px] opacity-0 group-hover:opacity-100 transition duration-300">
+                    <span className="absolute inset-0 rounded-full 
+                        bg-gradient-to-r 
+                        from-orange-400 via-pink-400 to-yellow-300
+                        animate-[spin_5s_cubic-bezier(0.4,0,0.2,1)_infinite]" />
+                </span>
+
+                {/* Inner Background (keeps button dark) */}
+                <span className="absolute inset-[1.5px] rounded-full bg-black" />
+
+                {/* Text */}
+                <span className="relative z-10">Try it</span>
+
+                {/* Arrow */}
+                <motion.span
+                    variants={{
+                        rest: { x: 0 },
+                        hover: { x: 8 }
+                    }}
+                    transition={{ type: "spring", stiffness: 300 }}
+                    className="relative z-10"
+                >
+                    <ArrowRight size={18} strokeWidth={2.5} />
+                </motion.span>
+
+            </motion.button>
+
+            <AnimatePresence>
+                {open && <InputPopup onClose={() => setOpen(false)} />}
+            </AnimatePresence>
+
         </section>
+
+
     )
 }
