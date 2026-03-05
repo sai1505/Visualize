@@ -2,16 +2,24 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
-const PIERCE_START = 2.0;
-const PIERCE_END = 3.2;
+const PIERCE_START = 2.0;   // zoom where root card starts blooming
+const PIERCE_END = 3.2;   // zoom where child cards are fully revealed
+const ENTER_ZOOM = 6.5;   // zoom where we enter the hovered child
+const ZOOM_OUT_THRESHOLD = PIERCE_START - 0.2; // resurface when zooming back below where pierce begins
+
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 14.0;
+
 const CHILD_COLORS = ["#4ade80", "#38bdf8", "#a78bfa", "#fb923c", "#f472b6"];
+
 const ROOT_W = 300;
 const ROOT_H = 180;
 const CARD_W = 220;
 const CARD_H = 165;
-const CARD_GAP = 12;
+
+// World-space gap between child cards (in logical px at zoom=1)
+// These are the positions child cards sit at in world space — they zoom WITH the scene
+const CARD_WORLD_GAP = 32;
 
 const API_BASE = "http://localhost:8000";
 
@@ -20,29 +28,23 @@ const easeIn = (t) => Math.pow(Math.min(1, Math.max(0, t)), 2);
 const lerp = (a, b, t) => a + (b - a) * t;
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
-function cardPositions(count) {
-    const totalW = count * CARD_W + (count - 1) * CARD_GAP;
+// World-space positions for child cards, centered around (0,0)
+// All in logical world units — multiplied by zoom at render time
+function worldCardPositions(count) {
+    const totalW = count * CARD_W + (count - 1) * CARD_WORLD_GAP;
     const startX = -totalW / 2 + CARD_W / 2;
     return Array.from({ length: count }, (_, i) => ({
-        x: startX + i * (CARD_W + CARD_GAP),
+        x: startX + i * (CARD_W + CARD_WORLD_GAP),
         y: 0,
     }));
 }
 
-// All positions are in SCREEN space directly — no world transform needed
-// We track a "base pan" that resets on each node transition
-// zoom is always relative to current node (starts at 1, pierce at PIERCE_END)
-function worldToScreen(wx, wy, zoom, panX, panY, vw, vh) {
+// Convert a world-space point to screen pixels
+function w2s(wx, wy, zoom, panX, panY, vw, vh) {
     return {
         sx: vw / 2 + panX + wx * zoom,
         sy: vh / 2 + panY + wy * zoom,
     };
-}
-
-function isOverCard(mx, my, sx, sy, scale) {
-    const hw = (CARD_W * scale) / 2;
-    const hh = (CARD_H * scale) / 2;
-    return mx >= sx - hw && mx <= sx + hw && my >= sy - hh && my <= sy + hh;
 }
 
 export default function GraphDashboard() {
@@ -55,7 +57,6 @@ export default function GraphDashboard() {
     const [currentNode, setCurrentNode] = useState(graphData || {});
     const [expandedData, setExpandedData] = useState({});
     const [prefetchingIds, setPrefetchingIds] = useState(new Set());
-    // stack entries: { node, zoom, panX, panY }
     const [nodeStack, setNodeStack] = useState([]);
 
     const currentNodeRef = useRef(currentNode);
@@ -71,7 +72,7 @@ export default function GraphDashboard() {
 
     const graphId = graphData?.id;
 
-    // S holds all mutable animation state — updated every rAF, never causes re-render
+    // All mutable animation state — never triggers re-render
     const S = useRef({
         zoom: 1, targetZoom: 1,
         panX: 0, panY: 0,
@@ -84,13 +85,14 @@ export default function GraphDashboard() {
         hoverChildIndex: -1,
         transitioning: false,
         zoomOutFired: false,
-        // offset of current node's root card in world space (0,0 = screen center at zoom=1)
-        // This resets to 0,0 on each transition — the "world" re-centers on the new node
         rootOffX: 0,
         rootOffY: 0,
+        // Blanks out all cards for one rAF frame during node swap to prevent flicker
+        swapping: false,
     }).current;
 
     const [, setTick] = useState(0);
+    const [swapFlash, setSwapFlash] = useState(false);
 
     useEffect(() => {
         const onResize = () => setVp({ w: window.innerWidth, h: window.innerHeight });
@@ -104,7 +106,7 @@ export default function GraphDashboard() {
         return () => window.removeEventListener("mousemove", onMove);
     }, [S]);
 
-    // ── Prefetch ────────────────────────────────────────────────────────────────
+    // ── Prefetch ─────────────────────────────────────────────────────────────────
     const prefetchNode = useCallback(async (child) => {
         if (expandedDataRef.current[child.id]) return;
         if (prefetchingRef.current.has(child.id)) return;
@@ -131,7 +133,7 @@ export default function GraphDashboard() {
         }
     }, [graphId]);
 
-    // ── rAF loop ────────────────────────────────────────────────────────────────
+    // ── rAF loop ──────────────────────────────────────────────────────────────────
     useEffect(() => {
         let raf;
         const loop = () => {
@@ -143,125 +145,109 @@ export default function GraphDashboard() {
             const children = node?.children || [];
             const { w: VW, h: VH } = vpRef.current;
 
-            // pierce is purely zoom-driven, resets each time zoom resets to 1
-            const pierceT = clamp((S.zoom - PIERCE_START) / (PIERCE_END - PIERCE_START), 0, 1);
+            // pierceT 0→1 drives root bloom + child reveal
+            const pierceT = clamp(
+                (S.zoom - PIERCE_START) / (PIERCE_END - PIERCE_START), 0, 1
+            );
             S.childReveal = pierceT >= 1
                 ? Math.min(1, S.childReveal + 0.025)
                 : Math.max(0, S.childReveal - 0.05);
 
-            // card positions in local world space (relative to current node center)
-            const localPos = cardPositions(children.length);
+            // World-space child card positions (same every frame, don't depend on zoom)
+            const wPos = worldCardPositions(children.length);
 
-            // ── Hover detection ─────────────────────────────────────────────────────
-            if (S.childReveal > 0 && children.length > 0 && !S.transitioning) {
+            // ── Hover: hit-test each child card in world→screen coords ──────────────
+            // Cards ARE in world space so they scale+move naturally with zoom.
+            // Siblings stay on screen because the user can simply not zoom toward them —
+            // panning/zooming toward a sibling keeps it visible just like in the video.
+            if (S.childReveal > 0.05 && children.length > 0 && !S.transitioning) {
                 let found = -1;
                 for (let i = 0; i < children.length; i++) {
-                    // local card position + root offset, then to screen
-                    const wx = S.rootOffX + localPos[i].x;
-                    const wy = S.rootOffY + localPos[i].y;
-                    const sc = worldToScreen(wx, wy, S.zoom, S.panX, S.panY, VW, VH);
-                    const revT = clamp((S.childReveal - i * 0.08) / 0.6, 0, 1);
-                    const zg = 1 + clamp((S.zoom - PIERCE_END) * 0.045, 0, 0.35);
-                    const cs = (0.84 + easeOut(revT) * 0.16) * zg;
-                    if (isOverCard(S.cursorX, S.cursorY, sc.sx, sc.sy, cs)) {
+                    // child card world center = rootOff + worldCardPos
+                    const worldX = S.rootOffX + wPos[i].x;
+                    const worldY = S.rootOffY + wPos[i].y;
+                    const { sx, sy } = w2s(worldX, worldY, S.zoom, S.panX, S.panY, VW, VH);
+                    // Card renders at zoom scale, hit-test in screen px
+                    const hw = (CARD_W * S.zoom) / 2;
+                    const hh = (CARD_H * S.zoom) / 2;
+                    if (
+                        S.cursorX >= sx - hw && S.cursorX <= sx + hw &&
+                        S.cursorY >= sy - hh && S.cursorY <= sy + hh
+                    ) {
                         found = i; break;
                     }
                 }
                 S.hoverChildIndex = found;
-
-                // prefetch all visible cards immediately
                 children.forEach(c => { if (c.has_children) prefetchNode(c); });
             } else if (S.childReveal === 0) {
                 S.hoverChildIndex = -1;
             }
 
-            // ── Zoom-IN transition ───────────────────────────────────────────────────
-            if (!S.transitioning && S.hoverChildIndex >= 0 && pierceT >= 1) {
+            // ── Zoom-IN: enter hovered child when targetZoom ≥ ENTER_ZOOM ────────────
+            // The user zooms toward a specific child card. Siblings are still in world
+            // space — as the user zooms in toward one card, siblings naturally drift to
+            // the edges exactly like in the reference video.
+            if (!S.transitioning && S.hoverChildIndex >= 0 && S.targetZoom >= ENTER_ZOOM) {
                 const idx = S.hoverChildIndex;
                 const child = children[idx];
                 const expanded = expandedDataRef.current[child?.id];
                 if (child && expanded) {
                     S.transitioning = true;
 
-                    // The child card's local world position
-                    const cardLocalX = localPos[idx].x;
-                    const cardLocalY = localPos[idx].y;
-                    // Its screen position right now
-                    const wx = S.rootOffX + cardLocalX;
-                    const wy = S.rootOffY + cardLocalY;
-                    const sc = worldToScreen(wx, wy, S.zoom, S.panX, S.panY, VW, VH);
-
-                    // Save state for zoom-out
-                    const savedZoom = S.zoom;
-                    const savedPanX = S.panX;
-                    const savedPanY = S.panY;
-                    const savedRootOffX = S.rootOffX;
-                    const savedRootOffY = S.rootOffY;
+                    const saved = {
+                        zoom: S.zoom, panX: S.panX, panY: S.panY,
+                        rootOffX: S.rootOffX, rootOffY: S.rootOffY,
+                    };
 
                     queueMicrotask(() => {
-                        setNodeStack(prev => [...prev, {
-                            node: currentNodeRef.current,
-                            zoom: savedZoom,
-                            panX: savedPanX,
-                            panY: savedPanY,
-                            rootOffX: savedRootOffX,
-                            rootOffY: savedRootOffY,
-                        }]);
+                        setNodeStack(prev => [...prev, { node: currentNodeRef.current, ...saved }]);
 
-                        // Reset zoom to 1 for the new node
-                        S.zoom = 1;
-                        S.targetZoom = 1;
-
-                        // The new node's root card should appear at exactly where the
-                        // child card is on screen right now.
-                        // screenX = VW/2 + panX + rootOffX * zoom
-                        // We want: VW/2 + newPanX + 0 * 1 = sc.sx
-                        // => newPanX = sc.sx - VW/2
-                        const { w: W, h: H } = vpRef.current;
-                        S.panX = sc.sx - W / 2;
-                        S.panY = sc.sy - H / 2;
-                        S.targetPanX = S.panX;
-                        S.targetPanY = S.panY;
+                        // Enter already pierced — start at PIERCE_END so the new node's
+                        // children are immediately revealed. No re-piercing required.
+                        S.zoom = PIERCE_END + 0.05;
+                        S.targetZoom = PIERCE_END + 0.05;
+                        S.panX = 0;
+                        S.panY = 0;
+                        S.targetPanX = 0;
+                        S.targetPanY = 0;
                         S.rootOffX = 0;
                         S.rootOffY = 0;
-
                         S.childReveal = 0;
                         S.hoverChildIndex = -1;
                         S.transitioning = false;
                         S.zoomOutFired = false;
-
-                        setCurrentNode({
-                            ...child,
-                            children: expanded.children || [],
-                        });
+                        setCurrentNode({ ...child, children: expanded.children || [] });
                     });
                 }
             }
 
-            // ── Zoom-OUT transition ──────────────────────────────────────────────────
-            if (!S.transitioning && nodeStackRef.current.length > 0 && S.zoom < 0.5 && !S.zoomOutFired) {
+            // ── Zoom-OUT: resurface to parent ─────────────────────────────────────────
+            if (!S.transitioning && nodeStackRef.current.length > 0
+                && S.targetZoom < ZOOM_OUT_THRESHOLD && !S.zoomOutFired) {
                 S.zoomOutFired = true;
                 S.transitioning = true;
                 queueMicrotask(() => {
-                    const stack = nodeStackRef.current;
-                    const entry = stack[stack.length - 1];
-                    S.zoom = entry.zoom;
-                    S.targetZoom = entry.zoom;
-                    S.panX = entry.panX;
-                    S.panY = entry.panY;
-                    S.targetPanX = entry.panX;
-                    S.targetPanY = entry.panY;
-                    S.rootOffX = entry.rootOffX;
-                    S.rootOffY = entry.rootOffY;
+                    const entry = nodeStackRef.current[nodeStackRef.current.length - 1];
+                    S.zoom = PIERCE_END + 0.05;
+                    S.targetZoom = PIERCE_END + 0.05;
+                    S.panX = 0;
+                    S.panY = 0;
+                    S.targetPanX = 0;
+                    S.targetPanY = 0;
+                    S.rootOffX = 0;
+                    S.rootOffY = 0;
                     S.childReveal = 0;
                     S.hoverChildIndex = -1;
                     S.transitioning = false;
                     S.zoomOutFired = false;
+                    // Flash a black overlay for 2 frames to hide any card flicker during swap
+                    setSwapFlash(true);
+                    setTimeout(() => setSwapFlash(false), 80);
                     setNodeStack(s => s.slice(0, -1));
                     setCurrentNode(entry.node);
                 });
             }
-            if (S.zoom > 0.65) S.zoomOutFired = false;
+            if (S.targetZoom > ZOOM_OUT_THRESHOLD + 0.5) S.zoomOutFired = false;
 
             setTick(t => t + 1);
             raf = requestAnimationFrame(loop);
@@ -271,7 +257,7 @@ export default function GraphDashboard() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // ── Wheel: zoom toward cursor ────────────────────────────────────────────────
+    // ── Wheel: zoom toward cursor ─────────────────────────────────────────────────
     useEffect(() => {
         const el = wrapRef.current;
         if (!el) return;
@@ -281,7 +267,7 @@ export default function GraphDashboard() {
             const factor = e.deltaY < 0 ? 1.12 : 0.90;
             const oldZoom = S.targetZoom;
             const newZoom = clamp(oldZoom * factor, MIN_ZOOM, MAX_ZOOM);
-            // zoom toward cursor — no forced pan
+            // Zoom toward cursor — world point under cursor stays fixed on screen
             const cx = e.clientX - VW / 2;
             const cy = e.clientY - VH / 2;
             S.targetPanX = cx - (cx - S.targetPanX) * (newZoom / oldZoom);
@@ -315,46 +301,53 @@ export default function GraphDashboard() {
         const stack = nodeStackRef.current;
         if (stack.length === 0) return;
         const entry = stack[stack.length - 1];
-        S.zoom = entry.zoom; S.targetZoom = entry.zoom;
-        S.panX = entry.panX; S.panY = entry.panY;
-        S.targetPanX = entry.panX; S.targetPanY = entry.panY;
-        S.rootOffX = entry.rootOffX; S.rootOffY = entry.rootOffY;
+        S.zoom = PIERCE_END + 0.05; S.targetZoom = PIERCE_END + 0.05;
+        S.panX = 0; S.panY = 0;
+        S.targetPanX = 0; S.targetPanY = 0;
+        S.rootOffX = 0; S.rootOffY = 0;
         S.childReveal = 0; S.hoverChildIndex = -1;
         S.transitioning = false; S.zoomOutFired = false;
+        S.swapping = false;
+        setSwapFlash(true);
+        setTimeout(() => setSwapFlash(false), 80);
         setNodeStack(s => s.slice(0, -1));
         setCurrentNode(entry.node);
     }, [S]);
 
     if (!graphData) { navigate("/"); return null; }
 
-    // ── Render ───────────────────────────────────────────────────────────────────
+    // ── Render ────────────────────────────────────────────────────────────────────
+    const isSwapping = S.swapping;
     const z = S.zoom;
     const pierceT = clamp((z - PIERCE_START) / (PIERCE_END - PIERCE_START), 0, 1);
     const isPiercing = pierceT > 0 && pierceT < 1;
     const isPierced = pierceT >= 1;
     const childReveal = S.childReveal;
+    const hoverIdx = S.hoverChildIndex;
 
     const children = currentNode.children || [];
-    const localPos = cardPositions(children.length);
     const { w: VW, h: VH } = vp;
 
-    // Root card screen pos
-    const rootSc = worldToScreen(S.rootOffX, S.rootOffY, z, S.panX, S.panY, VW, VH);
-
+    // Root card screen position (world-space → screen)
+    const rootSc = w2s(S.rootOffX, S.rootOffY, z, S.panX, S.panY, VW, VH);
     const rootBloat = 1 + pierceT * 0.3;
-    const rootOpacity = isPierced ? 0 : clamp(1 - easeIn(pierceT * 1.1), 0, 1);
+    const rootOpacity = isPierced ? 0
+        : clamp(1 - easeIn(pierceT * 1.1), 0, 1);
     const flashOp = isPiercing ? easeIn(pierceT) * 0.18 : 0;
 
-    const hoverIdx = S.hoverChildIndex;
-    const globalPierceT = pierceT;
-
-    // Child card screen positions
-    const childSc = localPos.map(p =>
-        worldToScreen(S.rootOffX + p.x, S.rootOffY + p.y, z, S.panX, S.panY, VW, VH)
+    // Child card world positions → screen positions (they move with zoom — correct!)
+    const wPos = worldCardPositions(children.length);
+    const childSc = wPos.map(p =>
+        w2s(S.rootOffX + p.x, S.rootOffY + p.y, z, S.panX, S.panY, VW, VH)
     );
 
-    const hex2 = (n) => Math.round(clamp(n, 0, 255)).toString(16).padStart(2, "0");
-    const zoomOutProg = nodeStack.length > 0 ? clamp((0.65 - z) / (0.65 - 0.5), 0, 1) : 0;
+    // Enter progress for hovered card
+    const enterProg = hoverIdx >= 0
+        ? clamp((S.targetZoom - PIERCE_END) / (ENTER_ZOOM - PIERCE_END), 0, 1)
+        : 0;
+    const zoomOutProg = nodeStack.length > 0
+        ? clamp((ZOOM_OUT_THRESHOLD + 0.3 - S.targetZoom) / 0.3, 0, 1)
+        : 0;
 
     return (
         <div
@@ -374,52 +367,53 @@ export default function GraphDashboard() {
             }}
         >
             <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap');
-        * { box-sizing:border-box; }
-        @keyframes breathe {
-          0%,100% { box-shadow:0 0 40px rgba(74,222,128,0.12),0 24px 70px rgba(0,0,0,0.7); }
-          50%      { box-shadow:0 0 60px rgba(74,222,128,0.22),0 24px 70px rgba(0,0,0,0.7); }
-        }
-        @keyframes dotPulse {
-          0%,100% { opacity:1; transform:scale(1); }
-          50%      { opacity:0.2; transform:scale(0.6); }
-        }
-        @keyframes ripple {
-          0%   { transform:scale(0.3); opacity:0.6; }
-          100% { transform:scale(3);   opacity:0; }
-        }
-        @keyframes childRipple {
-          0%   { transform:scale(0.5); opacity:0.45; }
-          100% { transform:scale(2.5); opacity:0; }
-        }
-        @keyframes spin { to { transform:rotate(360deg); } }
-        @keyframes fadeUp {
-          from { opacity:0; transform:translateY(5px) translateX(-50%); }
-          to   { opacity:1; transform:translateY(0) translateX(-50%); }
-        }
-        @keyframes outPulse {
-          0%,100% { opacity:0.5; }
-          50%      { opacity:1; }
-        }
-      `}</style>
+                @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap');
+                * { box-sizing: border-box; }
+                @keyframes breathe {
+                    0%,100% { box-shadow:0 0 40px rgba(74,222,128,0.12),0 24px 70px rgba(0,0,0,0.7); }
+                    50%     { box-shadow:0 0 60px rgba(74,222,128,0.22),0 24px 70px rgba(0,0,0,0.7); }
+                }
+                @keyframes dotPulse {
+                    0%,100% { opacity:1; transform:scale(1); }
+                    50%     { opacity:0.2; transform:scale(0.6); }
+                }
+                @keyframes ripple {
+                    0%   { transform:scale(0.3); opacity:0.6; }
+                    100% { transform:scale(3);   opacity:0; }
+                }
+                @keyframes childRipple {
+                    0%   { transform:scale(0.5); opacity:0.4; }
+                    100% { transform:scale(2.2); opacity:0; }
+                }
+                @keyframes spin { to { transform:rotate(360deg); } }
+                @keyframes fadeUp {
+                    from { opacity:0; transform:translateY(6px) translateX(-50%); }
+                    to   { opacity:1; transform:translateY(0)   translateX(-50%); }
+                }
+                @keyframes outPulse {
+                    0%,100% { opacity:0.5; }
+                    50%     { opacity:1; }
+                }
+            `}</style>
 
-            {/* BG glow */}
+            {/* BG ambient */}
             <div style={{
                 position: "absolute", inset: 0, pointerEvents: "none",
                 background: isPierced
                     ? "radial-gradient(ellipse 70% 60% at 50% 50%,rgba(56,189,248,0.04) 0%,transparent 70%)"
                     : "radial-gradient(ellipse 55% 55% at 50% 50%,rgba(74,222,128,0.03) 0%,transparent 70%)",
-                transition: "background 1.2s"
+                transition: "background 1.2s",
             }} />
             <div style={{
                 position: "absolute", inset: 0, pointerEvents: "none", zIndex: 60,
-                backgroundImage: "repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,0.012) 3px,rgba(0,0,0,0.012) 4px)"
+                backgroundImage: "repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,0.012) 3px,rgba(0,0,0,0.012) 4px)",
             }} />
 
-            {/* ── Root card ── */}
-            <div style={{
+            {/* ── Root card — world-space, scales with zoom ── */}
+            {!isSwapping && <div style={{
                 position: "absolute",
                 width: ROOT_W, height: ROOT_H,
+                // Position via top-left + scale from top-left so math is clean
                 left: rootSc.sx - (ROOT_W * z * rootBloat) / 2,
                 top: rootSc.sy - (ROOT_H * z * rootBloat) / 2,
                 transform: `scale(${z * rootBloat})`,
@@ -448,10 +442,7 @@ export default function GraphDashboard() {
                 </div>
                 <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <span style={{ fontSize: 9, color: "#1a2e40", letterSpacing: "0.1em", textTransform: "uppercase" }}>{children.length} nodes</span>
-                    <span style={{
-                        fontSize: 9, color: "#4ade80", letterSpacing: "0.1em", textTransform: "uppercase",
-                        opacity: pierceT === 0 ? 0.65 : 0, transition: "opacity 0.3s", animation: "dotPulse 2.5s ease-in-out infinite"
-                    }}>
+                    <span style={{ fontSize: 9, color: "#4ade80", letterSpacing: "0.1em", textTransform: "uppercase", opacity: pierceT === 0 ? 0.65 : 0, transition: "opacity 0.3s", animation: "dotPulse 2.5s ease-in-out infinite" }}>
                         scroll to pierce →
                     </span>
                 </div>
@@ -459,67 +450,84 @@ export default function GraphDashboard() {
                     <div key={i} style={{
                         position: "absolute", width: "100%", height: "100%",
                         border: "1px solid rgba(74,222,128,0.28)", borderRadius: 18, top: 0, left: 0, pointerEvents: "none",
-                        animation: `ripple ${0.85 + i * 0.28}s ease-out ${i * 0.22}s infinite`, transformOrigin: "center center"
+                        animation: `ripple ${0.85 + i * 0.28}s ease-out ${i * 0.22}s infinite`, transformOrigin: "center center",
                     }} />
                 ))}
-            </div>
+            </div>}
 
-            {/* ── Child cards ── */}
-            {children.map((child, i) => {
+            {/* ── Child cards — world-space, zoom WITH the scene like in the video ── */}
+            {!isSwapping && children.map((child, i) => {
                 const sc = childSc[i];
                 const color = CHILD_COLORS[i % CHILD_COLORS.length];
                 const revT = clamp((childReveal - i * 0.08) / 0.6, 0, 1);
                 const isHov = hoverIdx === i;
-                const cp = isHov ? globalPierceT : 0;
                 const isFetching = prefetchingIds.has(child.id);
                 const isReady = !!expandedData[child.id];
+                const ep = isHov ? enterProg : 0;
 
-                const zoomGrow = isPierced ? 1 + clamp((z - PIERCE_END) * 0.045, 0, 0.35) : 1;
-                const hoverGrow = isHov ? 1 + cp * 0.14 : 1;
-                const totalScale = (0.84 + easeOut(revT) * 0.16) * zoomGrow * hoverGrow;
+                // Cards scale with world zoom — this is what makes them grow as you zoom in
+                // Siblings stay visible because the user zooms toward ONE card; others drift
+                // to the edges naturally (same physics as the reference video)
+                const cardScale = z; // world-space: the card's visual size = CARD_W * z px
+                // Hovered card gets a tiny extra pulse as ep grows
+                const hoverBump = isHov ? 1 + ep * 0.04 : 1;
 
-                const pierceOp = isHov && cp > 0.6
-                    ? clamp(1 - easeIn((cp - 0.6) / 0.4) * 0.88, 0.12, 1)
-                    : 1;
-                const cardOp = easeOut(revT) * pierceOp;
+                // All sibling cards: fully opaque, never dim. Only enter-progress affects hovered.
+                const opacity = easeOut(revT);
 
                 return (
                     <div key={child.id} style={{
                         position: "absolute",
                         width: CARD_W, height: CARD_H,
-                        left: sc.sx - CARD_W / 2,
-                        top: sc.sy - CARD_H / 2,
-                        opacity: cardOp,
-                        transform: `scale(${totalScale})`,
-                        transformOrigin: "center center",
+                        // Center the card on its world→screen position
+                        left: sc.sx - (CARD_W * cardScale * hoverBump) / 2,
+                        top: sc.sy - (CARD_H * cardScale * hoverBump) / 2,
+                        // Scale from top-left (matching how left/top are computed)
+                        transform: `scale(${cardScale * hoverBump})`,
+                        transformOrigin: "top left",
+                        opacity,
                         background: "linear-gradient(145deg,rgba(12,20,40,0.97) 0%,rgba(16,26,46,0.95) 100%)",
-                        border: isHov && cp > 0
-                            ? `1.5px solid ${color}${hex2(50 + cp * 150)}`
-                            : `1px solid ${color}32`,
+                        border: isHov ? `1.5px solid ${color}dd` : `1px solid ${color}30`,
                         borderRadius: 12, padding: "12px 14px 10px",
-                        boxShadow: isHov && cp > 0
-                            ? `0 0 0 1px ${color}15,0 10px 40px rgba(0,0,0,0.8),0 0 ${Math.round(cp * 36)}px ${color}${hex2(cp * 33)},inset 0 1px 0 rgba(255,255,255,0.05)`
+                        boxShadow: isHov
+                            ? `0 0 0 1px ${color}18,0 12px 48px rgba(0,0,0,0.85),0 0 ${16 + ep * 40}px ${color}${Math.round(40 + ep * 100).toString(16).padStart(2, "0")},inset 0 1px 0 rgba(255,255,255,0.06)`
                             : `0 0 0 1px ${color}08,0 6px 24px rgba(0,0,0,0.55),inset 0 1px 0 rgba(255,255,255,0.03)`,
                         fontFamily: "'Space Mono',monospace",
                         zIndex: isHov ? 11 : 9,
                         overflow: "hidden", display: "flex", flexDirection: "column",
+                        pointerEvents: childReveal > 0.2 ? "auto" : "none",
                     }}>
+                        {/* Top accent */}
                         <div style={{
-                            position: "absolute", top: 0, left: 0, right: 0, height: isHov ? 3 : 2, borderRadius: "12px 12px 0 0",
-                            background: `linear-gradient(90deg,transparent,${color}${isHov ? "cc" : "65"},transparent)`
+                            position: "absolute", top: 0, left: 0, right: 0,
+                            height: isHov ? 3 : 2, borderRadius: "12px 12px 0 0",
+                            background: `linear-gradient(90deg,transparent,${color}${isHov ? "bb" : "50"},transparent)`,
                         }} />
+                        {/* Enter-progress fill on bottom edge */}
+                        {isHov && ep > 0 && (
+                            <div style={{
+                                position: "absolute", bottom: 0, left: 0,
+                                width: `${ep * 100}%`, height: 2,
+                                background: `linear-gradient(90deg,${color}55,${color})`,
+                                borderRadius: "0 0 0 12px",
+                            }} />
+                        )}
+                        {/* Corner dot */}
                         <div style={{
-                            position: "absolute", top: 10, right: 10, width: isHov ? 6 : 4, height: isHov ? 6 : 4,
-                            borderRadius: "50%", background: color, boxShadow: `0 0 ${isHov ? 11 : 6}px ${color}`, opacity: isHov ? 1 : 0.42
+                            position: "absolute", top: 10, right: 10,
+                            width: isHov ? 6 : 4, height: isHov ? 6 : 4,
+                            borderRadius: "50%", background: color,
+                            boxShadow: `0 0 ${isHov ? 11 : 5}px ${color}`, opacity: isHov ? 1 : 0.38,
                         }} />
 
+                        {/* Badge */}
                         <div style={{ fontSize: 7.5, letterSpacing: "0.12em", color, textTransform: "uppercase", fontWeight: 700, marginBottom: 5, opacity: 0.8, display: "flex", alignItems: "center", gap: 4 }}>
                             {isFetching
                                 ? <><span style={{ display: "inline-block", width: 6, height: 6, border: `1.5px solid ${color}35`, borderTopColor: color, borderRadius: "50%", animation: "spin 0.7s linear infinite" }} />fetching</>
                                 : isReady
-                                    ? (isHov && cp > 0.1 ? "◉ piercing" : "◈ ready")
+                                    ? (isHov && ep > 0.05 ? `◉ entering ${Math.round(ep * 100)}%` : "◈ ready")
                                     : child.has_children ? "◆ node" : "◇ leaf"
-                            } · d{child.depth}
+                            }{" "}· d{child.depth}
                         </div>
 
                         <div style={{ fontSize: 11.5, fontWeight: 700, color: "#dde8f5", lineHeight: 1.3, marginBottom: 5, letterSpacing: "-0.01em" }}>
@@ -531,51 +539,41 @@ export default function GraphDashboard() {
                                 : child.description}
                         </div>
 
-                        {isHov && cp > 0.35 && !isReady && child.has_children && (
+                        {isHov && !isReady && child.has_children && (
                             <div style={{
-                                marginTop: 5, padding: "3px 0", border: `1px solid ${color}20`, borderRadius: 5,
-                                background: "rgba(255,255,255,0.01)", color: `${color}55`, fontSize: 7, letterSpacing: "0.11em",
-                                textTransform: "uppercase", fontWeight: 700, textAlign: "center",
-                                display: "flex", alignItems: "center", justifyContent: "center", gap: 4
+                                marginTop: 5, padding: "3px 0", border: `1px solid ${color}18`, borderRadius: 5,
+                                background: "rgba(255,255,255,0.01)", color: `${color}50`, fontSize: 7,
+                                letterSpacing: "0.11em", textTransform: "uppercase", fontWeight: 700,
+                                textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
                             }}>
                                 <span style={{ display: "inline-block", width: 6, height: 6, border: `1.5px solid ${color}35`, borderTopColor: color, borderRadius: "50%", animation: "spin 0.7s linear infinite" }} />
                                 fetching…
                             </div>
                         )}
 
-                        {isHov && cp > 0.08 && [0, 1, 2].map(ri => (
+                        {isHov && [0, 1, 2].map(ri => (
                             <div key={ri} style={{
                                 position: "absolute", width: "100%", height: "100%",
-                                border: `1px solid ${color}35`, borderRadius: 12, top: 0, left: 0, pointerEvents: "none",
-                                animation: `childRipple ${0.9 + ri * 0.28}s ease-out ${ri * 0.24}s infinite`, transformOrigin: "center center"
+                                border: `1px solid ${color}28`, borderRadius: 12, top: 0, left: 0, pointerEvents: "none",
+                                animation: `childRipple ${0.9 + ri * 0.28}s ease-out ${ri * 0.24}s infinite`,
+                                transformOrigin: "center center",
                             }} />
                         ))}
                     </div>
                 );
             })}
 
-            {/* Pierce flash */}
-            <div style={{
-                position: "absolute", inset: 0, pointerEvents: "none", zIndex: 30,
-                background: "radial-gradient(ellipse 35% 35% at 50% 50%,rgba(74,222,128,0.12) 0%,transparent 65%)", opacity: flashOp
-            }} />
-            <div style={{
-                position: "absolute", inset: 0, pointerEvents: "none", zIndex: 31,
-                background: "rgba(200,255,225,1)", opacity: pierceT > 0.88 && !isPierced ? (1 - pierceT) / 0.12 * 0.07 : 0
-            }} />
+            {/* Swap flash — instant black cover during node transition to hide any flicker */}
+            {swapFlash && (
+                <div style={{ position: "absolute", inset: 0, background: "#030712", zIndex: 100, pointerEvents: "none" }} />
+            )}
+            <div style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 30, background: "radial-gradient(ellipse 35% 35% at 50% 50%,rgba(74,222,128,0.12) 0%,transparent 65%)", opacity: flashOp }} />
+            <div style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 31, background: "rgba(200,255,225,1)", opacity: pierceT > 0.88 && !isPierced ? (1 - pierceT) / 0.12 * 0.07 : 0 }} />
 
             {/* Zoom-out overlay */}
             {zoomOutProg > 0 && (
-                <div style={{
-                    position: "absolute", inset: 0, pointerEvents: "none", zIndex: 40,
-                    background: `rgba(8,14,30,${zoomOutProg * 0.4})`,
-                    display: "flex", alignItems: "center", justifyContent: "center"
-                }}>
-                    <div style={{
-                        fontFamily: "'Space Mono',monospace", fontSize: 10, color: "#4ade80",
-                        letterSpacing: "0.18em", textTransform: "uppercase", opacity: zoomOutProg,
-                        animation: "outPulse 0.9s ease-in-out infinite"
-                    }}>
+                <div style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 40, background: `rgba(8,14,30,${zoomOutProg * 0.45})`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <div style={{ fontFamily: "'Space Mono',monospace", fontSize: 10, color: "#4ade80", letterSpacing: "0.18em", textTransform: "uppercase", opacity: zoomOutProg, animation: "outPulse 0.9s ease-in-out infinite" }}>
                         ← resurfacing…
                     </div>
                 </div>
@@ -598,12 +596,7 @@ export default function GraphDashboard() {
 
             {/* Breadcrumb */}
             {nodeStack.length > 0 && (
-                <div style={{
-                    position: "absolute", bottom: 85, left: "50%", transform: "translateX(-50%)",
-                    zIndex: 50, display: "flex", alignItems: "center", gap: 5,
-                    fontFamily: "'Space Mono',monospace", fontSize: 7.5, color: "#1e3040",
-                    letterSpacing: "0.09em", textTransform: "uppercase", pointerEvents: "none", whiteSpace: "nowrap"
-                }}>
+                <div style={{ position: "absolute", bottom: 85, left: "50%", transform: "translateX(-50%)", zIndex: 50, display: "flex", alignItems: "center", gap: 5, fontFamily: "'Space Mono',monospace", fontSize: 7.5, color: "#1e3040", letterSpacing: "0.09em", textTransform: "uppercase", pointerEvents: "none", whiteSpace: "nowrap" }}>
                     {nodeStack.map((e, i) => (
                         <span key={i} style={{ display: "flex", alignItems: "center", gap: 5 }}>
                             <span style={{ color: "#172535" }}>{e.node?.title?.slice(0, 10) || "Root"}</span>
@@ -631,28 +624,24 @@ export default function GraphDashboard() {
             </div>
 
             {/* HUD bottom */}
-            <div style={{
-                position: "absolute", bottom: 24, left: "50%", transform: "translateX(-50%)",
-                display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
-                pointerEvents: "none", zIndex: 50, fontFamily: "'Space Mono',monospace"
-            }}>
+            <div style={{ position: "absolute", bottom: 24, left: "50%", transform: "translateX(-50%)", display: "flex", flexDirection: "column", alignItems: "center", gap: 8, pointerEvents: "none", zIndex: 50, fontFamily: "'Space Mono',monospace" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                     <span style={{ fontSize: 9, color: "#162030", letterSpacing: "0.1em", textTransform: "uppercase" }}>root</span>
                     <div style={{ width: 140, height: 2, background: "rgba(255,255,255,0.04)", borderRadius: 2, overflow: "hidden" }}>
                         <div style={{
                             height: "100%",
-                            width: `${clamp((z - MIN_ZOOM) / (PIERCE_END - MIN_ZOOM), 0, 1) * 100}%`,
-                            background: zoomOutProg > 0 ? "linear-gradient(90deg,#fb923c,#4ade80)"
-                                : isPierced ? "linear-gradient(90deg,#4ade80,#38bdf8)"
-                                    : isPiercing ? "linear-gradient(90deg,#4ade80,#fb923c)" : "#4ade8030",
-                            borderRadius: 2, transition: "background 0.4s"
+                            width: `${clamp((z - MIN_ZOOM) / (ENTER_ZOOM - MIN_ZOOM), 0, 1) * 100}%`,
+                            background: zoomOutProg > 0 ? "linear-gradient(90deg,#fb923c,#4ade80)" : isPierced ? `linear-gradient(90deg,#4ade80,${hoverIdx >= 0 ? "#38bdf8" : "#4ade80"})` : isPiercing ? "linear-gradient(90deg,#4ade80,#fb923c)" : "#4ade8030",
+                            borderRadius: 2, transition: "background 0.4s",
                         }} />
                     </div>
                     <span style={{ fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: isPierced ? "#4ade80" : "#162030" }}>graph</span>
                 </div>
                 <div style={{ fontSize: 8.5, color: "#162030", letterSpacing: "0.09em", textTransform: "uppercase", opacity: 0.5 }}>
-                    {zoomOutProg > 0 ? "keep scrolling out…"
-                        : isPierced ? "hover a card · scroll in to pierce · scroll out to go back"
+                    {zoomOutProg > 0
+                        ? "keep scrolling out to resurface…"
+                        : isPierced
+                            ? (hoverIdx >= 0 ? `zoom in to enter · ${Math.round(enterProg * 100)}% — or hover another card` : "hover a card · zoom in toward it · scroll out to go back")
                             : isPiercing ? "keep scrolling…"
                                 : "scroll to zoom · drag to pan"}
                 </div>
