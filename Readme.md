@@ -230,7 +230,7 @@ http://localhost:8000/docs (Swagger UI)
 
 ---
 
-## 6️⃣ Verify Backend
+## 5. Verify Backend
 
 1. Start the server.
 2. Open `/docs` in your browser.
@@ -287,8 +287,6 @@ Users can then explore the knowledge graph by interacting with the connected nod
 
 ---
 
-```
-
 ## Future Improvements
 
 * Image integration for concept cards
@@ -296,3 +294,5 @@ Users can then explore the knowledge graph by interacting with the connected nod
 * Node clustering for large knowledge spaces
 * Advanced interaction features (dragging, collapsing branches)
 * User customization of graph depth and branching factor (Taking output from LLMs).
+
+```
