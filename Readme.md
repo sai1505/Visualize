@@ -1,4 +1,4 @@
-# Interactive Knowledge Graph
+# Visualize (An Interactive Knowledge Graph System)
 
 ## 🧭 Overview
 
