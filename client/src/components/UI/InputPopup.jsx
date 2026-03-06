@@ -34,7 +34,7 @@ export default function InputPopup({ onClose }) {
             console.log("Status:", response.status)
 
             const data = await response.json()
-            navigate("/graph", { state: data })
+            navigate("/graphsimple", { state: data })
 
             //const data = await response.json()
             //console.log("Backend response:", data)
