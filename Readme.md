@@ -8,7 +8,7 @@ Traditional knowledge systems often present information as long text or static d
 
 The system generates a **concept-based knowledge graph**, where a main topic is expanded into related concepts. Each concept is represented as a card connected to other relevant nodes, enabling users to explore the information space in a structured and interactive manner.
 
-Initially, the task wa to take inputs via **JSON or XML**, but the implementation extends this by generating the knowledge graph dynamically using an **LLM backend**.
+Initially, the task was to take inputs via **JSON or XML**, but the implementation extends this by generating the knowledge graph dynamically using an **LLM backend**.
 
 ---
 
@@ -261,7 +261,7 @@ This installs all required frontend packages defined in `package.json`.
 
 ---
 
-### 3️⃣ Start the Development Server
+### 3. Start the Development Server
 
 ```bash
 npm run dev
@@ -288,8 +288,6 @@ Users can then explore the knowledge graph by interacting with the connected nod
 ---
 
 ```
-
----
 
 ## Future Improvements
 
