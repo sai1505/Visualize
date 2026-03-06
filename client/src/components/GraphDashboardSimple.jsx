@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
-// ── Constants ──────────────────────────────────────────────────────────────────
+// Constants / Factors that affect the graph strcuture
 const MIN_ZOOM = 0.15;
 const MAX_ZOOM = 4.0;
 const API_BASE = "http://localhost:8000";
@@ -17,17 +17,17 @@ const NODE_W = 200, NODE_H = 160;
 const LEVEL_GAP_X = 360;  // horizontal distance between levels
 const NODE_PAD_Y = 40;    // minimum vertical padding between nodes
 
-// ── Math helpers ───────────────────────────────────────────────────────────────
+// Math helpers
 const lerp = (a, b, t) => a + (b - a) * t;
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const easeOut = (t) => 1 - Math.pow(1 - clamp(t, 0, 1), 3);
 
-// ── Layout: Reingold-Tilford style — no overlaps ever ─────────────────────────
+// Layout: Reingold-Tilford style — no overlaps ever
 function layoutTree(root, expandedData) {
     const positions = {};
     let colorIdx = 0;
 
-    // Pass 1: compute the total subtree height for each node (recursively)
+    // compute the total subtree height for each node (recursively)
     function subtreeHeight(node, depth) {
         const h = depth === 0 ? ROOT_H : NODE_H;
         const childrenToShow = depth === 0
@@ -40,7 +40,7 @@ function layoutTree(root, expandedData) {
         return Math.max(h, total);
     }
 
-    // Pass 2: place nodes, centering each parent against its children's total span
+    // place nodes, centering each parent against its children's total span
     function place(node, x, centerY, parentId, depth) {
         const w = depth === 0 ? ROOT_W : NODE_W;
         const h = depth === 0 ? ROOT_H : NODE_H;
@@ -70,13 +70,13 @@ function layoutTree(root, expandedData) {
     return positions;
 }
 
-// ── Curved SVG path between two rects ─────────────────────────────────────────
+// Curved SVG path between two rects
 function cubicBezierPath(x1, y1, x2, y2) {
     const cpx = (x1 + x2) / 2;
     return `M ${x1} ${y1} C ${cpx} ${y1}, ${cpx} ${y2}, ${x2} ${y2}`;
 }
 
-// ── Minimap ───────────────────────────────────────────────────────────────────
+// Minimap
 function Minimap({ positions, zoom, panX, panY, vw, vh, focusedId }) {
     const MM_W = 180, MM_H = 120;
     if (Object.keys(positions).length === 0) return null;
@@ -134,7 +134,7 @@ function Minimap({ positions, zoom, panX, panY, vw, vh, focusedId }) {
     );
 }
 
-// ── Breadcrumb ────────────────────────────────────────────────────────────────
+// Breadcrumb (Navigation Part on the top middle of canvas)
 function Breadcrumb({ positions, focusedId, onFocus }) {
     if (!focusedId || !positions[focusedId]) return null;
 
@@ -176,7 +176,7 @@ function Breadcrumb({ positions, focusedId, onFocus }) {
     );
 }
 
-// ── Main component ─────────────────────────────────────────────────────────────
+// Main component
 export default function GraphDashboard() {
     const wrapRef = useRef(null);
     const svgRef = useRef(null);
@@ -224,7 +224,7 @@ export default function GraphDashboard() {
     // Compute positions from current expand state
     const positions = layoutTree(rootNode, expandedData);
 
-    // RAF loop
+    // Request Animation Frame loop
     useEffect(() => {
         let raf;
         const loop = () => {

@@ -4,6 +4,7 @@ from app.core.config import settings
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
+# Pormpt design
 def generate_children(topic: str, parent_title: str, depth: int, limit: int):
 
     prompt = f"""

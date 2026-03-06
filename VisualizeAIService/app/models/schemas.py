@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 from typing import Optional, List
 
+# Pydantic Schemas (For validation.)
 class GenerateRootRequest(BaseModel):
     topic: str
     max_nodes: int

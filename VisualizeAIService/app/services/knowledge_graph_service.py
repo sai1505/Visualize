@@ -5,6 +5,7 @@ from app.core.config import settings
 
 class KnowledgeGraphService:
 
+    # To generate root node
     @staticmethod
     def generate_root(topic: str, max_nodes: int):
 
@@ -40,8 +41,9 @@ class KnowledgeGraphService:
         save_node(graph_id, graph_id, root_node)
 
         return root_node
+    
 
-
+    # To generate nodes from a child node
     @staticmethod
     def expand_node(graph_id: str, node_id: str, title: str, depth: int, max_nodes: int):
 

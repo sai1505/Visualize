@@ -32,8 +32,6 @@ export default function Home() {
                     animate-[gradientMove_8s_linear_infinite]" />
                 </div>
 
-
-
                 <div
                     className="relative text-lg md:text-xl tracking-[0.4em] text-white flex gap-1"
                     style={{ fontFamily: "'Permanent Marker', system-ui, sans-serif" }}
@@ -84,6 +82,7 @@ export default function Home() {
                 explore relationships, and interpret data in a clear, intuitive way.
             </p>
 
+            {/* Button below the description */}
             <motion.button
                 onClick={() => setOpen(true)}
                 whileHover="hover"

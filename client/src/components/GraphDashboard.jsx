@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
+//Factors and trackers for a zoom in effect
 const PIERCE_START = 2.0;
 const PIERCE_END = 3.2;
 const ENTER_ZOOM = 6.5;
@@ -26,7 +27,7 @@ const CHILD_COLORS = [
 const ROOT_W = 220;
 const ROOT_H = 160;
 const CARD_W = 190;
-const CARD_H = 150; // taller to show full info
+const CARD_H = 150; // a bit taller to show full info
 const CARD_WORLD_GAP = 36;
 
 const API_BASE = "http://localhost:8000";

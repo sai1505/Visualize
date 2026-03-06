@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
+# Predefined Settings / Configurations
 class Settings:
     GROQ_API_KEY = os.getenv("GROQ_API_KEY")
     GROQ_MODEL = "openai/gpt-oss-120b"  # fast + strong

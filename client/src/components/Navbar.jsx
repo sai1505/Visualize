@@ -11,6 +11,7 @@ export default function Navbar() {
             <nav className="sticky top-0 z-50 backdrop-blur-md bg-black/70 border-b border-neutral-800">
                 <div className="max-w-7xl mx-auto px-8 py-4 flex items-center justify-between relative">
 
+                    {/* Left side of Navbar*/}
                     <h1
                         className="text-3xl md:text-4xl tracking-wide 
                                 bg-gradient-to-r from-white via-blue-300 to-cyan-400

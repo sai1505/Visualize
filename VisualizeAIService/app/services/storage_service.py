@@ -2,6 +2,7 @@ import os
 import json
 from app.core.config import settings
 
+# For storing the JSONs from the output of LLMs.
 def _graph_path(graph_id: str):
     return os.path.join(settings.STORAGE_PATH, graph_id)
 

@@ -6,6 +6,8 @@ import GraphDashboardSimple from "./components/GraphDashboardSimple"
 
 function App() {
   return (
+
+    // Routes of all pages.
     <Router>
       <Routes>
         <Route element={<Layout />}>

@@ -2,6 +2,7 @@ from fastapi import APIRouter
 from app.models.schemas import GenerateRootRequest, ExpandNodeRequest
 from app.services.knowledge_graph_service import KnowledgeGraphService
 
+# Routing the APIs.
 router = APIRouter()
 
 @router.post("/generate-root")
