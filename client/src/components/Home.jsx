@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { ArrowRight } from "lucide-react"
-import InputPopup from "./InputPopup"
+import InputPopup from "./UI/InputPopup"
 
 export default function Home() {
     const [open, setOpen] = useState(false);

@@ -1,5 +1,5 @@
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom"
-import Layout from "./components/Layout"
+import Layout from "./components/Layouts/Layout"
 import Home from "./components/Home"
 import GraphDashboard from "./components/GraphDashboard"
 import GraphDashboardSimple from "./components/GraphDashboardSimple"
