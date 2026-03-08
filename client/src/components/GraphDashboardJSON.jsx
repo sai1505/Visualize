@@ -150,7 +150,6 @@ export default function GraphDashboardJSON() {
     }, [S, resetAnimStateEntered]);
 
     const goHome = useCallback(() => {
-        if (nodeStackSyncRef.current.length === 0) return;
         // Land at zoom=2 — root card is visible, below PIERCE_START so children are hidden
         nodeStackSyncRef.current = [];
         swapToNode(graphData, [], 2.0);
@@ -808,13 +807,13 @@ export default function GraphDashboardJSON() {
                         title="Go to root layer"
                         style={{
                             width: 26, height: 26, borderRadius: "50%", padding: 0,
-                            background: nodeStack.length > 0 ? "rgba(255,255,255,0.88)" : "rgba(255,255,255,0.06)",
-                            border: nodeStack.length > 0 ? "none" : "1px solid rgba(255,255,255,0.14)",
-                            cursor: nodeStack.length > 0 ? "pointer" : "default",
+                            background: nodeStack.length >= 0 ? "rgba(255,255,255,0.88)" : "rgba(255,255,255,0.06)",
+                            border: nodeStack.length >= 0 ? "none" : "1px solid rgba(255,255,255,0.14)",
+                            cursor: nodeStack.length >= 0 ? "pointer" : "default",
                             display: "flex", alignItems: "center", justifyContent: "center",
                             fontSize: 12, flexShrink: 0,
-                            boxShadow: nodeStack.length > 0 ? "0 0 14px rgba(255,255,255,0.18)" : "none",
-                            animation: nodeStack.length > 0 ? "homePulse 2.5s ease-in-out infinite" : "none",
+                            boxShadow: nodeStack.length >= 0 ? "0 0 14px rgba(255,255,255,0.18)" : "none",
+                            animation: nodeStack.length >= 0 ? "homePulse 2.5s ease-in-out infinite" : "none",
                             transition: "all 0.3s",
                         }}
                     >🏠</button>
