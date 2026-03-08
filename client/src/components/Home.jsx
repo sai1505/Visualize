@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { ArrowRight } from "lucide-react"
-import InputPopup from "./UI/InputPopup"
+import InputPopupJSON from "./UI/InputPopupJSON";
 
 export default function Home() {
     const [open, setOpen] = useState(false);
@@ -126,7 +126,11 @@ export default function Home() {
             </motion.button>
 
             <AnimatePresence>
-                {open && <InputPopup onClose={() => setOpen(false)} />}
+                {open && <InputPopupJSON onClose={() => setOpen(false)}
+                    onData={(data) => {
+                        console.log("JSON data:", data)
+                        // do whatever you want with the parsed JSON here
+                    }} />}
             </AnimatePresence>
 
         </section>

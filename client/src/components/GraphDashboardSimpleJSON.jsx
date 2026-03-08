@@ -4,7 +4,6 @@ import { useLocation, useNavigate } from "react-router-dom";
 // Constants / Factors that affect the graph strcuture
 const MIN_ZOOM = 0.15;
 const MAX_ZOOM = 4.0;
-const API_BASE = "http://localhost:8000";
 
 const CHILD_COLORS = [
     "#FF3CAC", "#00F5FF", "#FFEA00", "#7B2FFF",
@@ -177,7 +176,7 @@ function Breadcrumb({ positions, focusedId, onFocus }) {
 }
 
 // Main component
-export default function GraphDashboardSimple() {
+export default function GraphDashboardSimpleJSON() {
     const wrapRef = useRef(null);
     const svgRef = useRef(null);
     const location = useLocation();
@@ -309,36 +308,16 @@ export default function GraphDashboardSimple() {
     }, [S]);
 
     // Expand a node
-    const expandNode = useCallback(async (node) => {
+    const expandNode = useCallback((node) => {
         if (expandedDataRef.current[node.id]) return;
-        if (expandingRef.current.has(node.id)) return;
-        setExpandingIds(prev => new Set([...prev, node.id]));
-        try {
-            const res = await fetch(`${API_BASE}/expand-node`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    graph_id: graphId,
-                    node_id: node.id,
-                    title: node.title,
-                    depth: node.depth,
-                    max_nodes: 5,
-                }),
-            });
-            if (!res.ok) throw new Error("expand failed");
-            const expanded = await res.json();
-            // Init reveal for new children
-            (expanded.children || []).forEach(c => {
-                S.nodeReveal[c.id] = 0;
-                S.edgeReveal[`${node.id}-${c.id}`] = 0;
-            });
-            setExpandedData(prev => ({ ...prev, [node.id]: expanded }));
-        } catch (err) {
-            console.error("Expand error:", err);
-        } finally {
-            setExpandingIds(prev => { const n = new Set(prev); n.delete(node.id); return n; });
-        }
-    }, [graphId, S]);
+        // Data already in JSON tree — use it directly
+        const children = node.children || [];
+        children.forEach(c => {
+            S.nodeReveal[c.id] = 0;
+            S.edgeReveal[`${node.id}-${c.id}`] = 0;
+        });
+        setExpandedData(prev => ({ ...prev, [node.id]: { children } }));
+    }, [S]);
 
     // Edge click: pan to child or parent
     const onEdgeClick = useCallback((parentId, childId) => {
@@ -497,7 +476,7 @@ export default function GraphDashboardSimple() {
                 const children = isRoot
                     ? (node.children || [])
                     : (expandedData[node.id]?.children || []);
-                const hasChildren = node.has_children || (node.children || []).length > 0;
+                const hasChildren = (node.children || []).length > 0;
 
                 return (
                     <div
@@ -609,7 +588,7 @@ export default function GraphDashboardSimple() {
                             wordBreak: "break-word", overflow: "hidden",
                             transition: "color 0.2s",
                         }}>
-                            {node.description || "No description available."}
+                            {node.content || "No description available."}
                         </div>
 
                         {/* Footer */}

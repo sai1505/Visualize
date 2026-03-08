@@ -36,9 +36,6 @@ export default function InputPopup({ onClose }) {
             const data = await response.json()
             navigate("/graph", { state: data })
 
-            //const data = await response.json()
-            //console.log("Backend response:", data)
-
             onClose()
 
         } catch (error) {
