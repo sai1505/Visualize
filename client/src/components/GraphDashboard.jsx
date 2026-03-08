@@ -54,15 +54,13 @@ export default function GraphDashboard() {
     const [expandedData, setExpandedData] = useState({});
     const [prefetchingIds, setPrefetchingIds] = useState(new Set());
     const [nodeStack, setNodeStack] = useState([]);
-    // swapFlash = true renders a solid black cover while node state swaps,
-    // preventing any intermediate frame from showing the wrong node.
     const [swapFlash, setSwapFlash] = useState(false);
 
     const currentNodeRef = useRef(currentNode);
     const expandedDataRef = useRef(expandedData);
     const prefetchingRef = useRef(prefetchingIds);
     const nodeStackRef = useRef(nodeStack);
-    const nodeStackSyncRef = useRef(nodeStack); // always in sync, updated before setNodeStack
+    const nodeStackSyncRef = useRef(nodeStack);
     const vpRef = useRef(vp);
     currentNodeRef.current = currentNode;
     expandedDataRef.current = expandedData;
@@ -88,10 +86,9 @@ export default function GraphDashboard() {
         rootOffX: 0, rootOffY: 0,
         mouseDownPos: { x: 0, y: 0 },
         didDrag: false,
-        // Animated resurface state
-        resurfacing: false,          // true while playing zoom-out animation
-        resurfaceTargetZoom: 0,      // the zoom we animate down to before swapping
-        resurfaceEntry: null,        // { node, zoom, panX, panY } saved on enter
+        resurfacing: false,
+        resurfaceTargetZoom: 0,
+        resurfaceEntry: null,
         resurfaceNewStack: null,
     }).current;
 
@@ -135,8 +132,8 @@ export default function GraphDashboard() {
         }
     }, [graphId]);
 
-    const resetAnimStateEntered = useCallback(() => {
-        S.zoom = PIERCE_END + 0.05; S.targetZoom = PIERCE_END + 0.05;
+    const resetAnimState = useCallback((zoom = PIERCE_END + 0.05) => {
+        S.zoom = zoom; S.targetZoom = zoom;
         S.panX = 0; S.panY = 0;
         S.targetPanX = 0; S.targetPanY = 0;
         S.rootOffX = 0; S.rootOffY = 0;
@@ -145,18 +142,19 @@ export default function GraphDashboard() {
         S.resurfacing = false; S.resurfaceEntry = null; S.resurfaceNewStack = null;
     }, [S]);
 
-    const swapToNode = useCallback((newNode, newStack) => {
-        resetAnimStateEntered();
+    // Kept as alias for enter-child callers
+    const resetAnimStateEntered = useCallback(() => resetAnimState(PIERCE_END + 0.05), [resetAnimState]);
+
+    const swapToNode = useCallback((newNode, newStack, zoom) => {
+        resetAnimState(zoom);
         setSwapFlash(true);
         requestAnimationFrame(() => {
             setCurrentNode(newNode);
             setNodeStack(newStack);
             setTimeout(() => setSwapFlash(false), 80);
         });
-    }, [resetAnimStateEntered]);
+    }, [resetAnimState]);
 
-    // Enter a child: save camera state, swap node, reset anim — all synchronous.
-    // No transitioning flag needed (buttons handle debounce via UI state).
     const enterChild = useCallback((child, expanded) => {
         if (!child || !expanded) return;
         if (S.resurfacing) return;
@@ -175,22 +173,27 @@ export default function GraphDashboard() {
 
     const goHome = useCallback(() => {
         if (nodeStackSyncRef.current.length === 0) return;
-        swapToNode(graphData, []);
+        // Land at zoom=2 — root card is visible, below PIERCE_START so children are hidden
+        nodeStackSyncRef.current = [];
+        swapToNode(graphData, [], 2.0);
     }, [swapToNode, graphData]);
 
     const goToLayer = useCallback((stackIndex) => {
         const stack = nodeStackRef.current;
         if (stackIndex < 0 || stackIndex >= stack.length) return;
-        swapToNode(stack[stackIndex].node, stack.slice(0, stackIndex));
+        const entry = stack[stackIndex];
+        nodeStackSyncRef.current = stack.slice(0, stackIndex);
+        swapToNode(entry.node, stack.slice(0, stackIndex), entry.zoom ?? (PIERCE_END + 0.05));
     }, [swapToNode]);
 
+    // FIX: goBack now works correctly regardless of zoom level — it always
+    // triggers the zoom-out animation and pops the stack.
     const goBack = useCallback(() => {
         const stack = nodeStackSyncRef.current;
         if (stack.length === 0) return;
         if (S.resurfacing || S.transitioning) return;
         const entry = stack[stack.length - 1];
         const newStack = stack.slice(0, -1);
-        // Kick off zoom-out animation — RAF Phase 2 will do the actual swap
         S.resurfacing = true;
         S.zoomOutFired = true;
         S.resurfaceEntry = entry;
@@ -235,8 +238,6 @@ export default function GraphDashboard() {
                     }
                 }
                 S.hoverChildIndex = found;
-                // ── Removed: automatic prefetch on hover. Children only load when
-                //    the user explicitly clicks the "Expand" button on a card. ──
             } else if (S.childReveal === 0) {
                 S.hoverChildIndex = -1;
             }
@@ -258,7 +259,7 @@ export default function GraphDashboard() {
                 const newStack = stack.slice(0, -1);
                 S.resurfaceEntry = entry;
                 S.resurfaceNewStack = newStack;
-                S.resurfaceTargetZoom = PIERCE_START - 0.3;  // ~1.7
+                S.resurfaceTargetZoom = PIERCE_START - 0.3;
                 S.targetZoom = S.resurfaceTargetZoom;
                 S.targetPanX = entry.panX ?? 0;
                 S.targetPanY = entry.panY ?? 0;
@@ -323,9 +324,11 @@ export default function GraphDashboard() {
         return () => el.removeEventListener("wheel", onWheel);
     }, [S]);
 
-    // Right-click = go back
+    // FIX: Right-click goes back — attached to the wrapper div, not individual cards.
+    // Cards must NOT call stopPropagation on contextmenu so it bubbles up here.
     const onContextMenu = useCallback((e) => {
         e.preventDefault();
+        e.stopPropagation();
         goBack();
     }, [goBack]);
 
@@ -356,12 +359,8 @@ export default function GraphDashboard() {
         const node = currentNodeRef.current;
         const children = node?.children || [];
         const { w: VW, h: VH } = vpRef.current;
-        const wPos = worldCardPositions(children.length);
 
-        if (S.childReveal > 0.3) {
-            // Card interactions (Expand / Enter) are handled by buttons inside each card.
-            // Canvas-level click when cards are visible does nothing extra.
-        } else {
+        if (S.childReveal <= 0.3) {
             // Click root card to zoom in
             const { sx, sy } = w2s(S.rootOffX, S.rootOffY, S.zoom, S.panX, S.panY, VW, VH);
             if (e.clientX >= sx - (ROOT_W * S.zoom) / 2 && e.clientX <= sx + (ROOT_W * S.zoom) / 2 &&
@@ -369,7 +368,7 @@ export default function GraphDashboard() {
                 S.targetZoom = clamp(S.targetZoom * 1.5, MIN_ZOOM, MAX_ZOOM);
             }
         }
-    }, [S, enterChild]);
+    }, [S]);
 
     const onTouchStart = useCallback((e) => {
         if (e.touches.length === 1) S.lastTouch = { x: e.touches[0].clientX, y: e.touches[0].clientY };
@@ -478,6 +477,9 @@ export default function GraphDashboard() {
                 .layer-bubble { transition: transform 0.15s; }
                 .layer-bubble:hover { transform: scale(1.4) !important; }
                 .layer-bubble:hover .bubble-tooltip { opacity: 1 !important; }
+                .child-card-enter:hover {
+                    cursor: pointer;
+                }
             `}</style>
 
             {/* Grid */}
@@ -601,28 +603,47 @@ export default function GraphDashboard() {
                 const opacity = easeOut(revT);
                 const glowSize = isHov ? 40 + ep * 60 : 0;
 
+                // FIX: Clicking anywhere on a ready card enters it.
+                // Only the Expand button handles expanding; no Enter button shown.
+                const handleCardClick = (e) => {
+                    // Let Expand button handle its own click
+                    if (e.target.closest("[data-expand-btn]")) return;
+                    if (isFetching) return;
+                    if (isReady) {
+                        e.stopPropagation();
+                        enterChild(child, expandedDataRef.current[child.id]);
+                    }
+                };
+
                 return (
-                    <div key={child.id} style={{
-                        position: "absolute",
-                        width: CARD_W, height: CARD_H,
-                        left: sc.sx - (CARD_W * z * hoverBump) / 2,
-                        top: sc.sy - (CARD_H * z * hoverBump) / 2,
-                        transform: `scale(${z * hoverBump})`,
-                        transformOrigin: "top left",
-                        opacity,
-                        background: "#000",
-                        border: isHov ? `1.5px solid ${color}` : "1px solid rgba(255,255,255,0.09)",
-                        borderRadius: 14, padding: "14px 16px 12px",
-                        boxShadow: isHov
-                            ? `0 0 0 1px ${color}22,0 16px 60px rgba(0,0,0,0.95),0 0 ${glowSize}px ${color}55,inset 0 1px 0 rgba(255,255,255,0.07)`
-                            : "0 0 0 1px rgba(255,255,255,0.03),0 8px 30px rgba(0,0,0,0.8),inset 0 1px 0 rgba(255,255,255,0.03)",
-                        fontFamily: "Inter,sans-serif",
-                        zIndex: isHov ? 11 : 9, overflow: "hidden",
-                        display: "flex", flexDirection: "column",
-                        pointerEvents: childReveal > 0.2 ? "auto" : "none",
-                        transition: "border-color 0.2s,box-shadow 0.2s",
-                        cursor: isReady || !child.has_children ? "pointer" : "default",
-                    }}>
+                    <div
+                        key={child.id}
+                        className={isReady ? "child-card-enter" : ""}
+                        onClick={handleCardClick}
+                        // FIX: Do NOT call stopPropagation on contextmenu here,
+                        // so right-click bubbles up to the wrapper's onContextMenu → goBack().
+                        onContextMenu={(e) => { e.preventDefault(); }}
+                        style={{
+                            position: "absolute",
+                            width: CARD_W, height: CARD_H,
+                            left: sc.sx - (CARD_W * z * hoverBump) / 2,
+                            top: sc.sy - (CARD_H * z * hoverBump) / 2,
+                            transform: `scale(${z * hoverBump})`,
+                            transformOrigin: "top left",
+                            opacity,
+                            background: "#000",
+                            border: isHov ? `1.5px solid ${color}` : "1px solid rgba(255,255,255,0.09)",
+                            borderRadius: 14, padding: "14px 16px 12px",
+                            boxShadow: isHov
+                                ? `0 0 0 1px ${color}22,0 16px 60px rgba(0,0,0,0.95),0 0 ${glowSize}px ${color}55,inset 0 1px 0 rgba(255,255,255,0.07)`
+                                : "0 0 0 1px rgba(255,255,255,0.03),0 8px 30px rgba(0,0,0,0.8),inset 0 1px 0 rgba(255,255,255,0.03)",
+                            fontFamily: "Inter,sans-serif",
+                            zIndex: isHov ? 11 : 9, overflow: "hidden",
+                            display: "flex", flexDirection: "column",
+                            pointerEvents: childReveal > 0.2 ? "auto" : "none",
+                            transition: "border-color 0.2s,box-shadow 0.2s",
+                            cursor: isReady ? "pointer" : isFetching ? "wait" : child.has_children ? "pointer" : "default",
+                        }}>
                         <div style={{
                             position: "absolute", top: 0, left: 0, right: 0, height: isHov ? 3 : 1.5,
                             borderRadius: "14px 14px 0 0",
@@ -657,7 +678,7 @@ export default function GraphDashboard() {
                                     border: `1.5px solid ${color}40`, borderTopColor: color,
                                     borderRadius: "50%", animation: "spin 0.7s linear infinite"
                                 }} />fetching</>
-                                : isReady ? (isHov && ep > 0.05 ? `◉ entering ${Math.round(ep * 100)}%` : "◈ ready")
+                                : isReady ? (isHov && ep > 0.05 ? `◉ entering ${Math.round(ep * 100)}%` : "◈ click to enter")
                                     : child.has_children ? "◆ node" : "◇ leaf"
                             }{" "}· depth {child.depth}
                         </div>
@@ -683,7 +704,8 @@ export default function GraphDashboard() {
                         }}>
                             {child.description || "No description available."}
                         </div>
-                        {/* ── Action button ── */}
+
+                        {/* ── Action button: ONLY Expand (no Enter button) ── */}
                         {isFetching ? (
                             // State 1: Currently fetching
                             <div style={{
@@ -703,27 +725,26 @@ export default function GraphDashboard() {
                                 loading…
                             </div>
                         ) : isReady ? (
-                            // State 2: Ready — Enter button
-                            <div
-                                onClick={(e) => { e.stopPropagation(); enterChild(child, expandedDataRef.current[child.id]); }}
-                                style={{
-                                    marginTop: 7, padding: "5px 0",
-                                    border: `1px solid ${color}50`, borderRadius: 6,
-                                    background: `${color}12`, color: color, fontSize: 7.5,
-                                    letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 700,
-                                    textAlign: "center", cursor: "pointer", flexShrink: 0,
-                                    fontFamily: "Inter,sans-serif",
-                                    transition: "background 0.15s, border-color 0.15s",
-                                    boxShadow: isHov ? `0 0 12px ${color}30` : "none",
-                                }}
-                                onMouseEnter={e => { e.currentTarget.style.background = `${color}22`; e.currentTarget.style.borderColor = color; }}
-                                onMouseLeave={e => { e.currentTarget.style.background = `${color}12`; e.currentTarget.style.borderColor = `${color}50`; }}
-                            >
-                                Enter →
+                            // State 2: Ready — show "click to enter" hint (no button, whole card is clickable)
+                            <div style={{
+                                marginTop: 7, padding: "5px 0",
+                                border: `1px solid ${color}35`, borderRadius: 6,
+                                background: isHov ? `${color}14` : `${color}06`,
+                                color: isHov ? color : `${color}70`, fontSize: 7.5,
+                                letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 700,
+                                textAlign: "center", flexShrink: 0,
+                                fontFamily: "Inter,sans-serif",
+                                transition: "background 0.15s, color 0.15s, border-color 0.15s",
+                                borderColor: isHov ? `${color}70` : `${color}30`,
+                                boxShadow: isHov ? `0 0 10px ${color}25` : "none",
+                                pointerEvents: "none", // whole card handles click
+                            }}>
+                                {isHov ? "↵ click anywhere to enter" : "↵ expanded · ready"}
                             </div>
                         ) : child.has_children ? (
-                            // State 3: Not fetched yet — Expand button
+                            // State 3: Not fetched yet — Expand button only
                             <div
+                                data-expand-btn="true"
                                 onClick={(e) => { e.stopPropagation(); prefetchNode(child); }}
                                 style={{
                                     marginTop: 7, padding: "5px 0",
@@ -912,27 +933,9 @@ export default function GraphDashboard() {
                     }}>{z.toFixed(2)}×</span>
                 </div>
                 <div style={{ fontSize: 9, color: "rgba(255,255,255,0.32)" }}>
-                    {nodeStack.length > 0 ? "scroll out · right-click to go back" : `pierce at ${PIERCE_END}×`}
+                    {nodeStack.length > 0 ? "right-click anywhere to go back" : `pierce at ${PIERCE_END}×`}
                 </div>
             </div>
-
-            {/* Back breadcrumb */}
-            {nodeStack.length > 0 && (
-                <button onClick={(e) => { e.stopPropagation(); goBack(); }} style={{
-                    position: "absolute", top: 22, left: "50%", transform: "translateX(-50%)",
-                    zIndex: 55, width: "350px",
-                    background: "#000", border: "1px solid rgba(255,255,255,0.15)",
-                    justifyContent: "center", borderRadius: 8, padding: "7px 20px",
-                    color: "rgba(255,255,255,0.7)", fontSize: 9,
-                    letterSpacing: "0.15em", textTransform: "uppercase",
-                    fontWeight: 600, fontFamily: "Inter,sans-serif", cursor: "pointer",
-                    backdropFilter: "blur(12px)", boxShadow: "0 4px 20px rgba(0,0,0,0.7)",
-                    display: "flex", alignItems: "center", gap: 8,
-                    animation: "fadeUp 0.3s ease",
-                }}>
-                    ← {nodeStack[nodeStack.length - 1]?.node?.title}
-                </button>
-            )}
 
             {/* HUD bottom */}
             <div style={{
@@ -962,7 +965,7 @@ export default function GraphDashboard() {
                     }}>graph</span>
                 </div>
                 <div style={{ fontSize: 8, color: "rgba(255,255,255,0.2)", letterSpacing: "0.1em", textTransform: "uppercase" }}>
-                    scroll · click node · right-click to go back
+                    scroll · click expanded node · right-click to go back
                 </div>
             </div>
         </div>
